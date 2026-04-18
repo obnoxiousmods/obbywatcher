@@ -304,6 +304,8 @@
   .button,
   .control-button,
   .live-button,
+  .live-chip,
+  .player-icon-button,
   .tool-button {
     @apply inline-flex min-h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg border border-ow-border bg-white/5 px-3 py-2 text-ow-text transition;
   }
@@ -312,6 +314,8 @@
   .button:hover,
   .control-button:hover,
   .live-button:hover,
+  .live-chip:hover,
+  .player-icon-button:hover,
   .tool-button:hover {
     @apply -translate-y-px border-ow-lavender/60 bg-white/10;
   }
@@ -320,7 +324,9 @@
   .button-primary,
   .primary-control,
   .live-button,
-  .control-button.active {
+  .live-chip,
+  .control-button.active,
+  .player-icon-button.active {
     @apply border-ow-lavender/60 bg-ow-lavender/18 text-ow-text;
     box-shadow: 0 0 0 1px var(--theme-glow);
   }
@@ -436,8 +442,8 @@
   }
 
   .player-controls {
-    @apply absolute inset-x-0 bottom-0 grid gap-2 p-3 pt-12 transition;
-    background: linear-gradient(180deg, transparent, rgba(8, 7, 13, 0.74) 26%, rgba(8, 7, 13, 0.96));
+    @apply absolute inset-x-0 bottom-0 grid gap-2 px-3 pb-3 pt-16 transition;
+    background: linear-gradient(180deg, transparent, rgba(8, 7, 13, 0.58) 30%, rgba(8, 7, 13, 0.94));
   }
 
   .controls-hidden .player-controls,
@@ -450,48 +456,87 @@
     @apply pointer-events-auto translate-y-0 opacity-100;
   }
 
-  .live-row {
-    @apply grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2;
+  .timeline-row {
+    @apply grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2;
   }
 
-  .live-track {
-    @apply relative h-1.5 overflow-hidden rounded-lg bg-white/16;
+  .live-chip {
+    @apply min-h-7 gap-1.5 rounded-md px-2 py-1 text-[11px] font-black;
   }
 
-  .live-track span {
+  .live-chip span {
+    @apply h-1.5 w-1.5 rounded-full bg-ow-rose;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-ow-rose) 16%, transparent);
+  }
+
+  .timeline-track {
+    @apply relative h-1.5 overflow-visible rounded-lg bg-white/16;
+  }
+
+  .timeline-fill {
     @apply absolute inset-y-0 left-0 min-w-3 rounded-lg;
     background: linear-gradient(90deg, var(--color-ow-mint), var(--color-ow-lavender), var(--color-ow-rose));
   }
 
-  .control-bar {
-    @apply flex min-h-10 flex-wrap items-center gap-2;
+  .timeline-thumb {
+    @apply absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/40 bg-ow-lavender opacity-0 transition-opacity;
+    box-shadow: 0 0 18px var(--theme-glow);
   }
 
-  .control-button,
-  .live-button {
-    @apply min-h-9 px-3 py-2 text-[13px];
+  .player-shell:hover .timeline-thumb,
+  .controls-visible .timeline-thumb {
+    @apply opacity-100;
+  }
+
+  .latency-readout {
+    @apply whitespace-nowrap text-[12px] text-ow-muted;
+  }
+
+  .control-bar {
+    @apply grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-white/10 bg-black/38 px-2 py-2;
+    backdrop-filter: blur(16px);
+  }
+
+  .control-left,
+  .control-right {
+    @apply flex min-w-0 items-center gap-2;
+  }
+
+  .control-right {
+    @apply justify-end;
+  }
+
+  .player-icon-button {
+    @apply h-9 w-9 shrink-0 rounded-md p-0;
   }
 
   .primary-control {
-    @apply min-w-20 font-black;
+    @apply h-10 w-10 min-w-0 font-black;
   }
 
-  .volume-control,
-  .menu-field {
-    @apply inline-flex min-h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-ow-border bg-white/[0.055] px-2.5 py-1.5 text-[13px] text-ow-muted;
+  .player-icon {
+    @apply h-4 w-4;
   }
 
-  .volume-control input {
-    @apply w-[112px];
+  .volume-cluster {
+    @apply flex min-w-[132px] items-center gap-1 rounded-md border border-white/8 bg-white/[0.045] px-1;
+  }
+
+  .volume-cluster input {
+    @apply w-[86px];
     accent-color: var(--color-ow-lavender);
   }
 
   .control-readout {
-    @apply rounded-lg border border-transparent px-1 text-[12px] text-ow-muted;
+    @apply hidden min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-lg border border-transparent px-1 text-[12px] text-ow-muted sm:block;
+  }
+
+  .menu-field {
+    @apply inline-flex min-h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-ow-border bg-white/[0.055] px-2.5 py-1.5 text-[13px] text-ow-muted;
   }
 
   .more-menu {
-    @apply absolute bottom-[72px] right-3 grid w-[min(380px,calc(100%-24px))] gap-3 rounded-lg border border-ow-border bg-ow-panel-soft/96 p-3;
+    @apply absolute bottom-[78px] right-3 grid w-[min(380px,calc(100%-24px))] gap-3 rounded-lg border border-ow-border bg-ow-panel-soft/96 p-3;
     box-shadow: var(--shadow);
     backdrop-filter: blur(18px);
   }
@@ -743,28 +788,45 @@
   }
 
   .player-controls {
-    padding: 38px 10px 10px;
+    padding: 42px 10px 10px;
+  }
+
+  .timeline-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .latency-readout {
+    display: none;
   }
 
   .control-bar {
-    gap: 6px;
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
-  .volume-control {
-    width: 162px;
+  .control-left,
+  .control-right {
+    width: 100%;
   }
 
-  .volume-control input {
-    width: 78px;
+  .control-right {
+    justify-content: flex-start;
   }
 
-  .control-readout,
-  .live-edge-control {
+  .volume-cluster {
+    min-width: 126px;
+  }
+
+  .volume-cluster input {
+    width: 80px;
+  }
+
+  .control-readout {
     display: none;
   }
 
   .more-menu {
-    bottom: 62px;
+    bottom: 94px;
     right: 10px;
     width: calc(100% - 20px);
   }

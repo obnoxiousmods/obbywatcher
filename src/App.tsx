@@ -28,6 +28,87 @@ type PictureInPictureVideo = HTMLVideoElement & {
   requestPictureInPicture?: () => Promise<PictureInPictureWindow>;
 };
 
+type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry";
+
+function PlayerIcon({ name }: { name: PlayerIconName }) {
+  const commonProps = {
+    className: "player-icon",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true
+  };
+
+  switch (name) {
+    case "play":
+      return (
+        <svg {...commonProps}>
+          <path d="M8 5v14l11-7-11-7z" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "pause":
+      return (
+        <svg {...commonProps}>
+          <path d="M8 5v14" />
+          <path d="M16 5v14" />
+        </svg>
+      );
+    case "volume":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 10v4h4l5 4V6l-5 4H4z" />
+          <path d="M16 9.5a4 4 0 0 1 0 5" />
+          <path d="M18.5 7a7 7 0 0 1 0 10" />
+        </svg>
+      );
+    case "muted":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 10v4h4l5 4V6l-5 4H4z" />
+          <path d="M17 9l4 4" />
+          <path d="M21 9l-4 4" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 7h16" />
+          <path d="M4 17h16" />
+          <path d="M9 7a2 2 0 1 0 0 .01" />
+          <path d="M15 17a2 2 0 1 0 0 .01" />
+        </svg>
+      );
+    case "pip":
+      return (
+        <svg {...commonProps}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <rect x="12" y="11" width="6" height="4" rx="1" />
+        </svg>
+      );
+    case "fullscreen":
+      return (
+        <svg {...commonProps}>
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+          <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+      );
+    case "retry":
+      return (
+        <svg {...commonProps}>
+          <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+          <path d="M20 4v6h-6" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
 function useClock() {
   const [clock, setClock] = useState(() => new Date());
 
@@ -487,55 +568,95 @@ export default function App() {
               ) : null}
 
               <div className="player-controls" aria-label="Player controls">
-                <div className="live-row">
-                  <button className="live-button" type="button" onClick={seekToLive}>
+                <div className="timeline-row">
+                  <button className="live-chip" type="button" onClick={seekToLive} aria-label="Go live">
+                    <span aria-hidden="true" />
                     LIVE
                   </button>
-                  <div className="live-track" aria-label="Live edge">
-                    <span style={{ width: `${liveProgressPercent}%` }} />
+                  <div className="timeline-track" aria-label="Live edge">
+                    <span className="timeline-fill" style={{ width: `${liveProgressPercent}%` }} />
+                    <span className="timeline-thumb" style={{ left: `${liveProgressPercent}%` }} />
                   </div>
+                  <span className="latency-readout">{formatSignedSeconds(snapshot.liveLatencySeconds)} behind</span>
                 </div>
 
                 <div className="control-bar">
-                  <button className="control-button primary-control" type="button" onClick={() => void togglePlayback()}>
-                    {playing ? "Pause" : "Play"}
-                  </button>
-                  <button className="control-button" type="button" onClick={toggleMute}>
-                    {ui.muted ? "Unmute" : "Mute"}
-                  </button>
-                  <label className="volume-control">
-                    <span>Volume</span>
-                    <input
-                      aria-label="Volume"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={ui.muted ? 0 : ui.volume}
-                      onChange={(event) => setVolume(Number(event.currentTarget.value))}
-                    />
-                  </label>
-                  <button className="control-button live-edge-control" type="button" onClick={seekToLive}>
-                    Go live
-                  </button>
-                  <span className="control-readout">{formatSignedSeconds(snapshot.bufferAheadSeconds)} buffer</span>
-                  <button className="control-button" type="button" onClick={retryNow}>
-                    Retry
-                  </button>
-                  <button
-                    className={ui.moreMenuOpen ? "control-button active" : "control-button"}
-                    type="button"
-                    onClick={() => dispatch({ type: "toggle-more" })}
-                    aria-expanded={ui.moreMenuOpen}
-                  >
-                    More
-                  </button>
-                  <button className="control-button" type="button" onClick={() => void togglePictureInPicture()}>
-                    {pictureInPicture ? "Close PiP" : "PiP"}
-                  </button>
-                  <button className="control-button" type="button" onClick={() => void toggleFullscreen()}>
-                    {fullscreen ? "Exit full" : "Fullscreen"}
-                  </button>
+                  <div className="control-left">
+                    <button
+                      className="player-icon-button primary-control"
+                      type="button"
+                      onClick={() => void togglePlayback()}
+                      aria-label={playing ? "Pause" : "Play"}
+                      title={playing ? "Pause" : "Play"}
+                    >
+                      <PlayerIcon name={playing ? "pause" : "play"} />
+                    </button>
+
+                    <div className="volume-cluster">
+                      <button
+                        className="player-icon-button"
+                        type="button"
+                        onClick={toggleMute}
+                        aria-label={ui.muted ? "Unmute" : "Mute"}
+                        title={ui.muted ? "Unmute" : "Mute"}
+                      >
+                        <PlayerIcon name={ui.muted ? "muted" : "volume"} />
+                      </button>
+                      <input
+                        aria-label="Volume"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={ui.muted ? 0 : ui.volume}
+                        onChange={(event) => setVolume(Number(event.currentTarget.value))}
+                      />
+                    </div>
+
+                    <span className="control-readout">
+                      Live stream · {formatSignedSeconds(snapshot.bufferAheadSeconds)} buffer
+                    </span>
+                  </div>
+
+                  <div className="control-right">
+                    <button
+                      className="player-icon-button"
+                      type="button"
+                      onClick={retryNow}
+                      aria-label="Retry"
+                      title="Retry"
+                    >
+                      <PlayerIcon name="retry" />
+                    </button>
+                    <button
+                      className={ui.moreMenuOpen ? "player-icon-button active" : "player-icon-button"}
+                      type="button"
+                      onClick={() => dispatch({ type: "toggle-more" })}
+                      aria-expanded={ui.moreMenuOpen}
+                      aria-label="More"
+                      title="More"
+                    >
+                      <PlayerIcon name="settings" />
+                    </button>
+                    <button
+                      className="player-icon-button"
+                      type="button"
+                      onClick={() => void togglePictureInPicture()}
+                      aria-label={pictureInPicture ? "Close PiP" : "PiP"}
+                      title={pictureInPicture ? "Close PiP" : "PiP"}
+                    >
+                      <PlayerIcon name="pip" />
+                    </button>
+                    <button
+                      className="player-icon-button"
+                      type="button"
+                      onClick={() => void toggleFullscreen()}
+                      aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+                      title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    >
+                      <PlayerIcon name="fullscreen" />
+                    </button>
+                  </div>
                 </div>
 
                 {ui.moreMenuOpen ? (
