@@ -4,10 +4,29 @@ test("loads the viewer shell", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Live Fight Stream" })).toBeVisible();
+  await expect(page.getByLabel("Theme")).toBeVisible();
+  await expect(page.getByLabel("Theme").locator("option")).toHaveCount(10);
   await expect(page.getByText("UFC schedule").first()).toBeVisible();
   await expect(page.getByText("Burns vs. Malott").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Primary live.obnoxious.lol" })).toBeVisible();
+});
+
+test("theme picker applies pastel themes", async ({ page }) => {
+  await page.goto("/");
+
+  const defaultAccent = await page
+    .locator(".app-shell")
+    .evaluate((element) => getComputedStyle(element).getPropertyValue("--color-ow-lavender").trim());
+  await page.getByLabel("Theme").selectOption("moonmint");
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "moonmint");
+  const mintAccent = await page
+    .locator(".app-shell")
+    .evaluate((element) => getComputedStyle(element).getPropertyValue("--color-ow-lavender").trim());
+  expect(mintAccent).not.toBe(defaultAccent);
+
+  await page.reload();
+  await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "moonmint");
 });
 
 test("custom controls expose diagnostics and keyboard mute", async ({ page }) => {

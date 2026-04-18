@@ -34,14 +34,7 @@
   body {
     @apply min-h-screen overflow-x-hidden bg-ow-bg text-ow-text;
     margin: 0;
-    background:
-      linear-gradient(rgba(205, 183, 255, 0.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(205, 183, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(180deg, #08070d 0%, #111018 52%, #08070d 100%);
-    background-size:
-      42px 42px,
-      42px 42px,
-      auto;
+    background: #08070d;
   }
 
   button,
@@ -90,11 +83,185 @@
 @layer components {
   .app-shell {
     @apply min-h-screen;
+    --theme-grid-strong: rgba(205, 183, 255, 0.045);
+    --theme-grid-soft: rgba(205, 183, 255, 0.035);
+    --theme-topbar: rgba(8, 7, 13, 0.76);
+    --theme-glow: rgba(205, 183, 255, 0.14);
+    background:
+      linear-gradient(var(--theme-grid-strong) 1px, transparent 1px),
+      linear-gradient(90deg, var(--theme-grid-soft) 1px, transparent 1px),
+      linear-gradient(180deg, var(--color-ow-bg) 0%, color-mix(in srgb, var(--color-ow-bg) 78%, var(--color-ow-panel) 22%) 52%, var(--color-ow-bg) 100%);
+    background-size:
+      42px 42px,
+      42px 42px,
+      auto;
+  }
+
+  .app-shell[data-theme="moonmint"] {
+    --color-ow-bg: #06100f;
+    --color-ow-panel: #101b19;
+    --color-ow-panel-soft: #172724;
+    --color-ow-border: #28423d;
+    --color-ow-text: #effff8;
+    --color-ow-muted: #b4d2c9;
+    --color-ow-faint: #7e9b94;
+    --color-ow-lavender: #a8f0da;
+    --color-ow-lavender-soft: #7bdcc3;
+    --color-ow-mint: #c9f5be;
+    --color-ow-rose: #ffadc2;
+    --theme-grid-strong: rgba(168, 240, 218, 0.048);
+    --theme-grid-soft: rgba(168, 240, 218, 0.035);
+    --theme-topbar: rgba(6, 16, 15, 0.78);
+    --theme-glow: rgba(168, 240, 218, 0.15);
+  }
+
+  .app-shell[data-theme="roseglass"] {
+    --color-ow-bg: #12080d;
+    --color-ow-panel: #201017;
+    --color-ow-panel-soft: #2a1820;
+    --color-ow-border: #4a2b37;
+    --color-ow-text: #fff3f7;
+    --color-ow-muted: #dfbbc8;
+    --color-ow-faint: #a78390;
+    --color-ow-lavender: #ffadc8;
+    --color-ow-lavender-soft: #f58cb0;
+    --color-ow-mint: #bff0dc;
+    --color-ow-rose: #ffd1a8;
+    --theme-grid-strong: rgba(255, 173, 200, 0.048);
+    --theme-grid-soft: rgba(255, 173, 200, 0.035);
+    --theme-topbar: rgba(18, 8, 13, 0.78);
+    --theme-glow: rgba(255, 173, 200, 0.15);
+  }
+
+  .app-shell[data-theme="skyline"] {
+    --color-ow-bg: #071018;
+    --color-ow-panel: #101a25;
+    --color-ow-panel-soft: #172638;
+    --color-ow-border: #263d55;
+    --color-ow-text: #f1f9ff;
+    --color-ow-muted: #b2c9df;
+    --color-ow-faint: #7f96ad;
+    --color-ow-lavender: #a9d7ff;
+    --color-ow-lavender-soft: #83bff2;
+    --color-ow-mint: #b7f2de;
+    --color-ow-rose: #ffb7cb;
+    --theme-grid-strong: rgba(169, 215, 255, 0.048);
+    --theme-grid-soft: rgba(169, 215, 255, 0.035);
+    --theme-topbar: rgba(7, 16, 24, 0.78);
+    --theme-glow: rgba(169, 215, 255, 0.15);
+  }
+
+  .app-shell[data-theme="peach"] {
+    --color-ow-bg: #120b08;
+    --color-ow-panel: #211713;
+    --color-ow-panel-soft: #2c201a;
+    --color-ow-border: #49382e;
+    --color-ow-text: #fff7f1;
+    --color-ow-muted: #dec4b2;
+    --color-ow-faint: #a88f7f;
+    --color-ow-lavender: #ffc8a8;
+    --color-ow-lavender-soft: #f4aa86;
+    --color-ow-mint: #c8f0c5;
+    --color-ow-rose: #ffb7d1;
+    --theme-grid-strong: rgba(255, 200, 168, 0.048);
+    --theme-grid-soft: rgba(255, 200, 168, 0.035);
+    --theme-topbar: rgba(18, 11, 8, 0.78);
+    --theme-glow: rgba(255, 200, 168, 0.15);
+  }
+
+  .app-shell[data-theme="lilac"] {
+    --color-ow-bg: #0c0713;
+    --color-ow-panel: #171020;
+    --color-ow-panel-soft: #21172d;
+    --color-ow-border: #38284c;
+    --color-ow-text: #f9f2ff;
+    --color-ow-muted: #c8b5d9;
+    --color-ow-faint: #927fa5;
+    --color-ow-lavender: #d8b4fe;
+    --color-ow-lavender-soft: #c084fc;
+    --color-ow-mint: #b7efdc;
+    --color-ow-rose: #ffabc3;
+    --theme-grid-strong: rgba(216, 180, 254, 0.052);
+    --theme-grid-soft: rgba(216, 180, 254, 0.038);
+    --theme-topbar: rgba(12, 7, 19, 0.78);
+    --theme-glow: rgba(216, 180, 254, 0.16);
+  }
+
+  .app-shell[data-theme="sage"] {
+    --color-ow-bg: #080f0a;
+    --color-ow-panel: #121b14;
+    --color-ow-panel-soft: #1a271d;
+    --color-ow-border: #2f4333;
+    --color-ow-text: #f3fff0;
+    --color-ow-muted: #bbd0b7;
+    --color-ow-faint: #879b84;
+    --color-ow-lavender: #bde8b5;
+    --color-ow-lavender-soft: #a1d99a;
+    --color-ow-mint: #baf0dc;
+    --color-ow-rose: #ffb6c7;
+    --theme-grid-strong: rgba(189, 232, 181, 0.048);
+    --theme-grid-soft: rgba(189, 232, 181, 0.035);
+    --theme-topbar: rgba(8, 15, 10, 0.78);
+    --theme-glow: rgba(189, 232, 181, 0.15);
+  }
+
+  .app-shell[data-theme="butter"] {
+    --color-ow-bg: #111006;
+    --color-ow-panel: #1f1d10;
+    --color-ow-panel-soft: #2c2917;
+    --color-ow-border: #474126;
+    --color-ow-text: #fffced;
+    --color-ow-muted: #d9d0a6;
+    --color-ow-faint: #a39b76;
+    --color-ow-lavender: #f6e8a8;
+    --color-ow-lavender-soft: #ead477;
+    --color-ow-mint: #bfe9cf;
+    --color-ow-rose: #ffb3c6;
+    --theme-grid-strong: rgba(246, 232, 168, 0.048);
+    --theme-grid-soft: rgba(246, 232, 168, 0.035);
+    --theme-topbar: rgba(17, 16, 6, 0.78);
+    --theme-glow: rgba(246, 232, 168, 0.15);
+  }
+
+  .app-shell[data-theme="coral"] {
+    --color-ow-bg: #120809;
+    --color-ow-panel: #211314;
+    --color-ow-panel-soft: #2e1c1d;
+    --color-ow-border: #4a3032;
+    --color-ow-text: #fff2f1;
+    --color-ow-muted: #dfb9b7;
+    --color-ow-faint: #a98280;
+    --color-ow-lavender: #ffb0a8;
+    --color-ow-lavender-soft: #f28b83;
+    --color-ow-mint: #bcebd7;
+    --color-ow-rose: #ffc0df;
+    --theme-grid-strong: rgba(255, 176, 168, 0.048);
+    --theme-grid-soft: rgba(255, 176, 168, 0.035);
+    --theme-topbar: rgba(18, 8, 9, 0.78);
+    --theme-glow: rgba(255, 176, 168, 0.15);
+  }
+
+  .app-shell[data-theme="periwinkle"] {
+    --color-ow-bg: #090b16;
+    --color-ow-panel: #121628;
+    --color-ow-panel-soft: #1a2038;
+    --color-ow-border: #2e385b;
+    --color-ow-text: #f2f4ff;
+    --color-ow-muted: #bac2e4;
+    --color-ow-faint: #858fb2;
+    --color-ow-lavender: #b9c7ff;
+    --color-ow-lavender-soft: #9baeff;
+    --color-ow-mint: #b6ebdc;
+    --color-ow-rose: #ffb1c9;
+    --theme-grid-strong: rgba(185, 199, 255, 0.05);
+    --theme-grid-soft: rgba(185, 199, 255, 0.036);
+    --theme-topbar: rgba(9, 11, 22, 0.78);
+    --theme-glow: rgba(185, 199, 255, 0.16);
   }
 
   .topbar {
     @apply sticky top-0 z-40 mx-auto flex w-[min(1560px,calc(100%-24px))] items-center justify-between gap-3 py-3;
-    background: rgba(8, 7, 13, 0.76);
+    background: var(--theme-topbar);
     backdrop-filter: blur(18px);
   }
 
@@ -104,7 +271,7 @@
 
   .brand-mark {
     @apply grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-ow-border text-[13px] font-black text-ow-bg;
-    background: linear-gradient(145deg, #cdb7ff, #9fe7ce);
+    background: linear-gradient(145deg, var(--color-ow-lavender), var(--color-ow-mint));
   }
 
   .brand strong,
@@ -123,6 +290,14 @@
   .top-actions,
   .heading-actions {
     @apply flex flex-wrap items-center justify-end gap-2;
+  }
+
+  .theme-picker {
+    @apply inline-flex min-h-9 items-center gap-2 rounded-lg border border-ow-border bg-white/5 px-2.5 py-1.5 text-[13px] text-ow-muted;
+  }
+
+  .theme-picker select {
+    @apply min-h-7 rounded-md border border-ow-border bg-ow-bg px-2 text-ow-text;
   }
 
   .chip,
@@ -147,7 +322,7 @@
   .live-button,
   .control-button.active {
     @apply border-ow-lavender/60 bg-ow-lavender/18 text-ow-text;
-    box-shadow: 0 0 0 1px rgba(205, 183, 255, 0.12);
+    box-shadow: 0 0 0 1px var(--theme-glow);
   }
 
   .button-small {
@@ -194,7 +369,7 @@
   .status-live span,
   .signal-live {
     @apply bg-ow-mint;
-    box-shadow: 0 0 0 5px rgba(159, 231, 206, 0.12);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-ow-mint) 18%, transparent);
   }
 
   .status-buffering span,
@@ -285,7 +460,7 @@
 
   .live-track span {
     @apply absolute inset-y-0 left-0 min-w-3 rounded-lg;
-    background: linear-gradient(90deg, #9fe7ce, #cdb7ff, #ff9bb5);
+    background: linear-gradient(90deg, var(--color-ow-mint), var(--color-ow-lavender), var(--color-ow-rose));
   }
 
   .control-bar {
@@ -308,7 +483,7 @@
 
   .volume-control input {
     @apply w-[112px];
-    accent-color: #cdb7ff;
+    accent-color: var(--color-ow-lavender);
   }
 
   .control-readout {

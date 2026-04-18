@@ -12,6 +12,7 @@ or administer the transcoder.
 - Dark pastel interface with purple accents and custom auto-hide player
   controls for play/pause, sound, volume, live edge, retry, settings, stats,
   fullscreen, and picture-in-picture.
+- Theme picker with ten pastel dark themes, defaulting to pastel purple.
 - Compatibility-first automatic recovery for stale manifests, persistent
   stalled playback, media errors, network errors, and browser offline/online
   transitions.

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { streamConfig } from "./config/stream";
+import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
+import type { ThemeId } from "./config/themes";
 import { ufcSchedule, ufcScheduleLastChecked } from "./config/ufcSchedule";
 import { useLiveHls } from "./hooks/useLiveHls";
 import type { LivePlaybackStatus } from "./hooks/useLiveHls";
@@ -55,6 +57,12 @@ function loadInitialPlayerState(): PlayerUiState {
   } catch {
     return initialPlayerUiState;
   }
+}
+
+function loadInitialTheme(): ThemeId {
+  if (typeof window === "undefined") return defaultThemeId;
+  const saved = window.localStorage.getItem("obbywatcher:theme");
+  return saved && isThemeId(saved) ? saved : defaultThemeId;
 }
 
 function statusCopy(status: LivePlaybackStatus) {
@@ -121,6 +129,7 @@ export default function App() {
   const now = useClock();
   const nowMs = now.getTime();
   const [notice, setNotice] = useState<string>(streamConfig.schedule);
+  const [themeId, setThemeId] = useState<ThemeId>(loadInitialTheme);
   const [ui, dispatch] = useReducer(playerUiReducer, undefined, loadInitialPlayerState);
   const [playing, setPlaying] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -159,6 +168,10 @@ export default function App() {
       })
     );
   }, [ui.muted, ui.statsOpen, ui.volume]);
+
+  useEffect(() => {
+    window.localStorage.setItem("obbywatcher:theme", themeId);
+  }, [themeId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -374,7 +387,7 @@ export default function App() {
     .join(" ");
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={themeId}>
       <header className="topbar">
         <a className="brand" href={streamConfig.canonicalUrl} aria-label="ObbyWatcher home">
           <span className="brand-mark" aria-hidden="true">
@@ -387,6 +400,23 @@ export default function App() {
         </a>
 
         <nav className="top-actions" aria-label="Stream links">
+          <label className="theme-picker">
+            <span>Theme</span>
+            <select
+              aria-label="Theme"
+              value={themeId}
+              onChange={(event) => {
+                const nextTheme = event.currentTarget.value;
+                if (isThemeId(nextTheme)) setThemeId(nextTheme);
+              }}
+            >
+              {themeOptions.map((theme) => (
+                <option value={theme.id} key={theme.id}>
+                  {theme.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <a className="chip chip-live" href={activeMirror.streamUrl} target="_blank" rel="noreferrer">
             Open HLS
           </a>
