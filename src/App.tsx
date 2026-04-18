@@ -49,10 +49,8 @@ function loadInitialPlayerState(): PlayerUiState {
       ...initialPlayerUiState,
       volume: clampVolume(Number(parsed.volume ?? initialPlayerUiState.volume)),
       muted: Boolean(parsed.muted ?? initialPlayerUiState.muted),
-      theater: Boolean(parsed.theater ?? initialPlayerUiState.theater),
       statsOpen: Boolean(parsed.statsOpen ?? initialPlayerUiState.statsOpen),
-      chatOpen: parsed.chatOpen === undefined ? initialPlayerUiState.chatOpen : Boolean(parsed.chatOpen),
-      controlsPinned: Boolean(parsed.controlsPinned ?? initialPlayerUiState.controlsPinned)
+      moreMenuOpen: false
     };
   } catch {
     return initialPlayerUiState;
@@ -133,13 +131,7 @@ export default function App() {
   const playerOptions = useMemo(
     () => ({
       autoPlay: true,
-      forceAutoplayAudio: true,
-      mirrorFailureThreshold: 1,
-      staleTargetDurations: 1.75,
-      stallTimeoutMs: 2_500,
-      healthIntervalMs: 750,
-      backoffBaseMs: 150,
-      backoffMaxMs: 8_000
+      forceAutoplayAudio: true
     }),
     []
   );
@@ -149,8 +141,13 @@ export default function App() {
   const activeStatus = statusCopy(snapshot.status);
   const scheduleBuckets = useMemo(() => getScheduleBuckets(ufcSchedule, nowMs), [nowMs]);
   const featuredEvent = scheduleBuckets.current ?? scheduleBuckets.next ?? ufcSchedule[0];
-  const latencyMax = Math.max(8, snapshot.targetDurationSeconds * 4);
-  const latencyPercent = percent(snapshot.liveLatencySeconds, latencyMax);
+  const playerBusy =
+    snapshot.autoplayBlocked ||
+    snapshot.status === "buffering" ||
+    snapshot.status === "connecting" ||
+    snapshot.status === "reconnecting";
+  const latencyMax = Math.max(12, snapshot.targetDurationSeconds * 5);
+  const liveProgressPercent = Math.max(8, 100 - percent(snapshot.liveLatencySeconds, latencyMax));
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -158,13 +155,10 @@ export default function App() {
       JSON.stringify({
         volume: ui.volume,
         muted: ui.muted,
-        theater: ui.theater,
-        statsOpen: ui.statsOpen,
-        chatOpen: ui.chatOpen,
-        controlsPinned: ui.controlsPinned
+        statsOpen: ui.statsOpen
       })
     );
-  }, [ui]);
+  }, [ui.muted, ui.statsOpen, ui.volume]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -213,9 +207,9 @@ export default function App() {
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     if (hideControlsTimer.current !== null) window.clearTimeout(hideControlsTimer.current);
-    if (ui.controlsPinned || !playing) return;
-    hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 2600);
-  }, [playing, ui.controlsPinned]);
+    if (!playing || playerBusy || ui.moreMenuOpen) return;
+    hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 2500);
+  }, [playerBusy, playing, ui.moreMenuOpen]);
 
   useEffect(() => {
     revealControls();
@@ -324,10 +318,6 @@ export default function App() {
           event.preventDefault();
           void togglePictureInPicture();
           break;
-        case "t":
-          event.preventDefault();
-          dispatch({ type: "toggle-theater" });
-          break;
         case "r":
           event.preventDefault();
           if (event.shiftKey) {
@@ -335,6 +325,9 @@ export default function App() {
           } else {
             retryNow();
           }
+          break;
+        case "escape":
+          dispatch({ type: "set-more", open: false });
           break;
         case "arrowup":
           event.preventDefault();
@@ -373,7 +366,7 @@ export default function App() {
 
   const playerClass = [
     "player-shell",
-    controlsVisible || ui.controlsPinned ? "controls-visible" : "controls-hidden",
+    controlsVisible || !playing || playerBusy || ui.moreMenuOpen ? "controls-visible" : "controls-hidden",
     fullscreen ? "is-fullscreen" : "",
     snapshot.autoplayBlocked ? "needs-audio" : ""
   ]
@@ -381,7 +374,7 @@ export default function App() {
     .join(" ");
 
   return (
-    <div className={ui.theater ? "app-shell theater-mode" : "app-shell"}>
+    <div className="app-shell">
       <header className="topbar">
         <a className="brand" href={streamConfig.canonicalUrl} aria-label="ObbyWatcher home">
           <span className="brand-mark" aria-hidden="true">
@@ -409,214 +402,228 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="layout">
-        <section className="watch">
-          <div className="watch-heading">
-            <div>
-              <p className="kicker">Live fight signal</p>
-              <h1>{streamConfig.title}</h1>
-              <p className="lead">
-                Unmuted autoplay, fresh mirror probing, hard resets, live-edge seeking, and manual controls for
-                stubborn browsers.
-              </p>
-            </div>
-
-            <div className={`status-badge status-${snapshot.status}`}>
-              <span aria-hidden="true" />
-              {activeStatus}
-            </div>
-          </div>
-
-          <div
-            ref={playerShellRef}
-            className={playerClass}
-            onMouseMove={revealControls}
-            onPointerDown={revealControls}
-            onFocus={revealControls}
-          >
-            <video
-              ref={videoRef}
-              className="player"
-              autoPlay
-              playsInline
-              preload="auto"
-              poster={streamConfig.imageUrl}
-            />
-
-            <div className="player-topline">
-              <span className={`signal-pill signal-${snapshot.status}`}>{activeStatus}</span>
-              <span>{activeMirror.host}</span>
-              <span>{formatSignedSeconds(snapshot.liveLatencySeconds)} behind</span>
-            </div>
-
-            <button className="center-play" type="button" onClick={() => void togglePlayback()}>
-              {playing ? "Pause" : "Play"}
-            </button>
-
-            {snapshot.autoplayBlocked ? (
-              <div className="audio-prompt" role="status">
-                <strong>Sound needs one click</strong>
-                <span>Browser policy blocked unmuted autoplay.</span>
-                <button className="button button-primary" type="button" onClick={() => void enableAudio()}>
-                  Enable sound
-                </button>
+      <main className="page-layout">
+        <section className="watch-row">
+          <section className="watch" aria-label="Live stream">
+            <div className="watch-titlebar">
+              <div>
+                <p className="kicker">Live fight signal</p>
+                <h1>{streamConfig.title}</h1>
               </div>
-            ) : null}
 
-            <div className="control-dock" aria-label="Player controls">
-              <div className="live-meter">
-                <button className="live-button" type="button" onClick={seekToLive}>
-                  LIVE
+              <div className={`status-badge status-${snapshot.status}`}>
+                <span aria-hidden="true" />
+                {activeStatus}
+              </div>
+            </div>
+
+            <div
+              ref={playerShellRef}
+              className={playerClass}
+              onMouseMove={revealControls}
+              onPointerDown={revealControls}
+              onFocus={revealControls}
+            >
+              <video
+                ref={videoRef}
+                className="player"
+                autoPlay
+                playsInline
+                preload="auto"
+                poster={streamConfig.imageUrl}
+                onClick={() => void togglePlayback()}
+              />
+
+              <div className="player-topline">
+                <span className={`signal-pill signal-${snapshot.status}`}>{activeStatus}</span>
+                <span>{activeMirror.host}</span>
+                <span>{formatSignedSeconds(snapshot.liveLatencySeconds)} behind</span>
+              </div>
+
+              {!playing || playerBusy ? (
+                <button className="center-play" type="button" onClick={() => void togglePlayback()}>
+                  {playing ? activeStatus : "Play"}
                 </button>
-                <div className="live-track" aria-label="Live latency">
-                  <span style={{ width: `${latencyPercent}%` }} />
+              ) : null}
+
+              {snapshot.autoplayBlocked ? (
+                <div className="audio-prompt" role="status">
+                  <strong>Sound needs one click</strong>
+                  <span>Browser policy blocked unmuted autoplay.</span>
+                  <button className="button button-primary" type="button" onClick={() => void enableAudio()}>
+                    Enable sound
+                  </button>
                 </div>
-                <span>{formatSignedSeconds(snapshot.bufferAheadSeconds)} buffer</span>
-              </div>
+              ) : null}
 
-              <div className="control-row">
-                <button className="control-button primary-control" type="button" onClick={() => void togglePlayback()}>
-                  {playing ? "Pause" : "Play"}
-                </button>
+              <div className="player-controls" aria-label="Player controls">
+                <div className="live-row">
+                  <button className="live-button" type="button" onClick={seekToLive}>
+                    LIVE
+                  </button>
+                  <div className="live-track" aria-label="Live edge">
+                    <span style={{ width: `${liveProgressPercent}%` }} />
+                  </div>
+                </div>
 
-                <button className="control-button" type="button" onClick={toggleMute}>
-                  {ui.muted ? "Unmute" : "Mute"}
-                </button>
-
-                <label className="volume-control">
-                  <span>Volume</span>
-                  <input
-                    aria-label="Volume"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={ui.muted ? 0 : ui.volume}
-                    onChange={(event) => setVolume(Number(event.currentTarget.value))}
-                  />
-                </label>
-
-                <button className="control-button" type="button" onClick={seekToLive}>
-                  Go live
-                </button>
-                <button className="control-button" type="button" onClick={retryNow}>
-                  Retry
-                </button>
-                <button className="control-button" type="button" onClick={hardReconnect}>
-                  Hard reset
-                </button>
-
-                <label className="mirror-select">
-                  <span>Mirror</span>
-                  <select
-                    value={snapshot.activeMirrorIndex}
-                    onChange={(event) => switchMirror(Number(event.currentTarget.value))}
+                <div className="control-bar">
+                  <button className="control-button primary-control" type="button" onClick={() => void togglePlayback()}>
+                    {playing ? "Pause" : "Play"}
+                  </button>
+                  <button className="control-button" type="button" onClick={toggleMute}>
+                    {ui.muted ? "Unmute" : "Mute"}
+                  </button>
+                  <label className="volume-control">
+                    <span>Volume</span>
+                    <input
+                      aria-label="Volume"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={ui.muted ? 0 : ui.volume}
+                      onChange={(event) => setVolume(Number(event.currentTarget.value))}
+                    />
+                  </label>
+                  <button className="control-button live-edge-control" type="button" onClick={seekToLive}>
+                    Go live
+                  </button>
+                  <span className="control-readout">{formatSignedSeconds(snapshot.bufferAheadSeconds)} buffer</span>
+                  <button className="control-button" type="button" onClick={retryNow}>
+                    Retry
+                  </button>
+                  <button
+                    className={ui.moreMenuOpen ? "control-button active" : "control-button"}
+                    type="button"
+                    onClick={() => dispatch({ type: "toggle-more" })}
+                    aria-expanded={ui.moreMenuOpen}
                   >
-                    {streamConfig.mirrors.map((mirror, index) => (
-                      <option value={index} key={mirror.id}>
-                        {mirror.label} - {mirror.host}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    More
+                  </button>
+                  <button className="control-button" type="button" onClick={() => void togglePictureInPicture()}>
+                    {pictureInPicture ? "Close PiP" : "PiP"}
+                  </button>
+                  <button className="control-button" type="button" onClick={() => void toggleFullscreen()}>
+                    {fullscreen ? "Exit full" : "Fullscreen"}
+                  </button>
+                </div>
 
-                <button className="control-button" type="button" onClick={copyStreamUrl}>
-                  Copy HLS
-                </button>
-                <button className="control-button" type="button" onClick={() => dispatch({ type: "toggle-stats" })}>
-                  {ui.statsOpen ? "Hide stats" : "Stats"}
-                </button>
-                <button className="control-button" type="button" onClick={() => dispatch({ type: "toggle-pinned" })}>
-                  {ui.controlsPinned ? "Unpin" : "Pin"}
-                </button>
-                <button className="control-button" type="button" onClick={() => dispatch({ type: "toggle-theater" })}>
-                  {ui.theater ? "Normal" : "Theater"}
-                </button>
-                <button className="control-button" type="button" onClick={() => void togglePictureInPicture()}>
-                  {pictureInPicture ? "Close PiP" : "PiP"}
-                </button>
-                <button className="control-button" type="button" onClick={() => void toggleFullscreen()}>
-                  {fullscreen ? "Exit full" : "Fullscreen"}
-                </button>
-              </div>
-            </div>
-          </div>
+                {ui.moreMenuOpen ? (
+                  <div className="more-menu" role="menu">
+                    <label className="menu-field">
+                      <span>Mirror</span>
+                      <select
+                        value={snapshot.activeMirrorIndex}
+                        onChange={(event) => switchMirror(Number(event.currentTarget.value))}
+                      >
+                        {streamConfig.mirrors.map((mirror, index) => (
+                          <option value={index} key={mirror.id}>
+                            {mirror.label} - {mirror.host}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-          <div className="signal-grid" aria-label="Playback health">
-            <div>
-              <span>Mode</span>
-              <strong>{snapshot.mode}</strong>
-            </div>
-            <div>
-              <span>Latency</span>
-              <strong>{formatSignedSeconds(snapshot.liveLatencySeconds)}</strong>
-            </div>
-            <div>
-              <span>Buffer</span>
-              <strong>{formatSignedSeconds(snapshot.bufferAheadSeconds)}</strong>
-            </div>
-            <div>
-              <span>Recoveries</span>
-              <strong>{snapshot.recoveryCount}</strong>
-            </div>
-            <div>
-              <span>Segment</span>
-              <strong>{relativeTime(snapshot.lastSegmentAtMs)}</strong>
-            </div>
-            <div>
-              <span>Retry</span>
-              <strong>{retryEta(snapshot.nextRetryAtMs)}</strong>
-            </div>
-          </div>
+                    <div className="menu-actions">
+                      <button className="button" type="button" onClick={hardReconnect}>
+                        Hard reconnect
+                      </button>
+                      <button className="button" type="button" onClick={copyStreamUrl}>
+                        Copy HLS
+                      </button>
+                      <button className="button" type="button" onClick={copyVlcCommand}>
+                        Copy VLC
+                      </button>
+                      <button className="button" type="button" onClick={copyMpvCommand}>
+                        Copy MPV
+                      </button>
+                      <button className="button" type="button" onClick={() => dispatch({ type: "toggle-stats" })}>
+                        {ui.statsOpen ? "Hide stats" : "Show stats"}
+                      </button>
+                    </div>
 
-          {ui.statsOpen ? (
-            <div className="diagnostics" aria-label="Advanced diagnostics">
-              <div>
-                <span>Sequence</span>
-                <strong>{snapshot.currentSequence ?? "--"}</strong>
-              </div>
-              <div>
-                <span>Target duration</span>
-                <strong>{formatDuration(snapshot.targetDurationSeconds)}</strong>
-              </div>
-              <div>
-                <span>Decoded frames</span>
-                <strong>{snapshot.decodedFrames ?? "--"}</strong>
-              </div>
-              <div>
-                <span>Dropped frames</span>
-                <strong>{snapshot.droppedFrames ?? "--"}</strong>
-              </div>
-              <div>
-                <span>Probe</span>
-                <strong>
-                  {snapshot.lastProbe
-                    ? `${snapshot.lastProbe.host} ${snapshot.lastProbe.ok ? "seq" : "fail"} ${
-                        snapshot.lastProbe.sequence ?? snapshot.lastProbe.error ?? "--"
-                      }`
-                    : "--"}
-                </strong>
-              </div>
-              <div>
-                <span>Shortcut map</span>
-                <strong>Space, M, F, P, T, R, Shift+R</strong>
+                    {ui.statsOpen ? (
+                      <div className="menu-stats" aria-label="Advanced diagnostics">
+                        <div>
+                          <span>Mode</span>
+                          <strong>{snapshot.mode}</strong>
+                        </div>
+                        <div>
+                          <span>Latency</span>
+                          <strong>{formatSignedSeconds(snapshot.liveLatencySeconds)}</strong>
+                        </div>
+                        <div>
+                          <span>Sequence</span>
+                          <strong>{snapshot.currentSequence ?? "--"}</strong>
+                        </div>
+                        <div>
+                          <span>Target</span>
+                          <strong>{formatDuration(snapshot.targetDurationSeconds)}</strong>
+                        </div>
+                        <div>
+                          <span>Frames</span>
+                          <strong>
+                            {snapshot.decodedFrames ?? "--"} / {snapshot.droppedFrames ?? "--"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Retry</span>
+                          <strong>{retryEta(snapshot.nextRetryAtMs)}</strong>
+                        </div>
+                        <div>
+                          <span>Shortcut map</span>
+                          <strong>Space, M, F, P, R</strong>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
-          ) : null}
 
-          {snapshot.lastError ? <p className="status-note">{snapshot.lastError}</p> : null}
+            <div className="signal-strip" aria-label="Playback health">
+              <div>
+                <span>Mode</span>
+                <strong>{snapshot.mode}</strong>
+              </div>
+              <div>
+                <span>Buffer</span>
+                <strong>{formatSignedSeconds(snapshot.bufferAheadSeconds)}</strong>
+              </div>
+              <div>
+                <span>Recoveries</span>
+                <strong>{snapshot.recoveryCount}</strong>
+              </div>
+              <div>
+                <span>Segment</span>
+                <strong>{relativeTime(snapshot.lastSegmentAtMs)}</strong>
+              </div>
+            </div>
+
+            {snapshot.lastError ? <p className="status-note">{snapshot.lastError}</p> : null}
+          </section>
+
+          <aside className="chat-panel" aria-label="Chat">
+            <div className="panel-heading">
+              <h2>Chat</h2>
+              <a className="button button-small" href={streamConfig.chatUrl} target="_blank" rel="noreferrer">
+                Pop out
+              </a>
+            </div>
+            <iframe title="Chat" src={streamConfig.chatUrl} loading="lazy" referrerPolicy="no-referrer" />
+          </aside>
         </section>
 
-        <aside className="side-rail">
-          <section className="schedule-panel" aria-label="UFC schedule">
-            <div className="panel-heading">
-              <div>
-                <p className="kicker">UFC schedule</p>
-                <h2>{featuredEvent.shortTitle}</h2>
-              </div>
-              <span>{countdownLabel(eventStartMs(featuredEvent), nowMs)}</span>
+        <section className="schedule-panel" aria-label="UFC schedule">
+          <div className="panel-heading">
+            <div>
+              <p className="kicker">UFC schedule</p>
+              <h2>{featuredEvent.shortTitle}</h2>
             </div>
+            <span>{countdownLabel(eventStartMs(featuredEvent), nowMs)}</span>
+          </div>
 
+          <div className="schedule-body">
             <div className="featured-fight">
               <img src={streamConfig.imageUrl} alt="" loading="lazy" />
               <div>
@@ -656,16 +663,14 @@ export default function App() {
                 </a>
               ))}
             </div>
+          </div>
 
-            <p className="source-note">Schedule checked {ufcScheduleLastChecked}. Fight cards and times can change.</p>
-          </section>
+          <p className="source-note">Schedule checked {ufcScheduleLastChecked}. Fight cards and times can change.</p>
+        </section>
 
-          <section className="tools-panel" aria-label="Stream tools">
-            <div className="panel-heading">
-              <h2>Stream tools</h2>
-              <span>{now.toLocaleTimeString([], { hour12: false })}</span>
-            </div>
-
+        <section className="utility-panel" aria-label="Stream tools and links">
+          <div className="utility-group">
+            <h2>Stream tools</h2>
             <div className="tool-grid">
               <button className="tool-button" type="button" onClick={reload}>
                 <strong>Reload stream</strong>
@@ -673,18 +678,21 @@ export default function App() {
               </button>
               <button className="tool-button" type="button" onClick={hardReconnect}>
                 <strong>Hard reconnect</strong>
-                <span>Destroy and rebuild playback</span>
+                <span>Rebuild playback</span>
               </button>
               <button className="tool-button" type="button" onClick={copyVlcCommand}>
                 <strong>Copy VLC</strong>
-                <span>External player command</span>
+                <span>External player</span>
               </button>
               <button className="tool-button" type="button" onClick={copyMpvCommand}>
                 <strong>Copy MPV</strong>
-                <span>External player command</span>
+                <span>External player</span>
               </button>
             </div>
+          </div>
 
+          <div className="utility-group">
+            <h2>Mirrors</h2>
             <div className="mirror-list">
               {streamConfig.mirrors.map((mirror, index) => (
                 <div className="mirror-row" key={mirror.id}>
@@ -702,15 +710,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-          </section>
+          </div>
 
-          <section className="links-panel" aria-label="Links">
-            <div className="panel-heading">
-              <h2>Links</h2>
-              <a className="button button-small" href={streamConfig.ircUrl}>
-                IRC
-              </a>
-            </div>
+          <div className="utility-group">
+            <h2>Links</h2>
             <div className="link-list">
               {streamConfig.watchLinks.map((link) => (
                 <a href={link.href} target="_blank" rel="noreferrer" key={link.href}>
@@ -719,25 +722,8 @@ export default function App() {
                 </a>
               ))}
             </div>
-          </section>
-
-          <section className={ui.chatOpen ? "chat-panel" : "chat-panel collapsed"} aria-label="Chat">
-            <div className="panel-heading">
-              <h2>Chat</h2>
-              <div className="heading-actions">
-                <button className="button button-small" type="button" onClick={() => dispatch({ type: "toggle-chat" })}>
-                  {ui.chatOpen ? "Hide" : "Show"}
-                </button>
-                <a className="button button-small" href={streamConfig.chatUrl} target="_blank" rel="noreferrer">
-                  Pop out
-                </a>
-              </div>
-            </div>
-            {ui.chatOpen ? (
-              <iframe title="Chat" src={streamConfig.chatUrl} loading="lazy" referrerPolicy="no-referrer" />
-            ) : null}
-          </section>
-        </aside>
+          </div>
+        </section>
       </main>
     </div>
   );

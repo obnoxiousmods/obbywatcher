@@ -3,28 +3,23 @@ import type { UfcEvent } from "../config/ufcSchedule";
 export type PlayerUiState = {
   volume: number;
   muted: boolean;
-  theater: boolean;
   statsOpen: boolean;
-  chatOpen: boolean;
-  controlsPinned: boolean;
+  moreMenuOpen: boolean;
 };
 
 export type PlayerUiAction =
   | { type: "set-volume"; volume: number }
   | { type: "toggle-muted" }
   | { type: "set-muted"; muted: boolean }
-  | { type: "toggle-theater" }
   | { type: "toggle-stats" }
-  | { type: "toggle-chat" }
-  | { type: "toggle-pinned" };
+  | { type: "toggle-more" }
+  | { type: "set-more"; open: boolean };
 
 export const initialPlayerUiState: PlayerUiState = {
   volume: 1,
   muted: false,
-  theater: false,
   statsOpen: false,
-  chatOpen: true,
-  controlsPinned: false
+  moreMenuOpen: false
 };
 
 export function clampVolume(value: number) {
@@ -46,14 +41,12 @@ export function playerUiReducer(state: PlayerUiState, action: PlayerUiAction): P
       return { ...state, muted: !state.muted };
     case "set-muted":
       return { ...state, muted: action.muted };
-    case "toggle-theater":
-      return { ...state, theater: !state.theater };
     case "toggle-stats":
       return { ...state, statsOpen: !state.statsOpen };
-    case "toggle-chat":
-      return { ...state, chatOpen: !state.chatOpen };
-    case "toggle-pinned":
-      return { ...state, controlsPinned: !state.controlsPinned };
+    case "toggle-more":
+      return { ...state, moreMenuOpen: !state.moreMenuOpen };
+    case "set-more":
+      return { ...state, moreMenuOpen: action.open };
     default:
       return state;
   }

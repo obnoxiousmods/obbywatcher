@@ -13,16 +13,15 @@ describe("player controls", () => {
     expect(audible.muted).toBe(false);
   });
 
-  it("toggles theater, stats, chat, and pinned controls independently", () => {
-    const theater = playerUiReducer(initialPlayerUiState, { type: "toggle-theater" });
-    const stats = playerUiReducer(theater, { type: "toggle-stats" });
-    const chat = playerUiReducer(stats, { type: "toggle-chat" });
-    const pinned = playerUiReducer(chat, { type: "toggle-pinned" });
+  it("toggles stats and the more menu independently", () => {
+    const stats = playerUiReducer(initialPlayerUiState, { type: "toggle-stats" });
+    const menu = playerUiReducer(stats, { type: "toggle-more" });
+    const closed = playerUiReducer(menu, { type: "set-more", open: false });
 
-    expect(pinned.theater).toBe(true);
-    expect(pinned.statsOpen).toBe(true);
-    expect(pinned.chatOpen).toBe(false);
-    expect(pinned.controlsPinned).toBe(true);
+    expect(menu.statsOpen).toBe(true);
+    expect(menu.moreMenuOpen).toBe(true);
+    expect(closed.statsOpen).toBe(true);
+    expect(closed.moreMenuOpen).toBe(false);
   });
 });
 

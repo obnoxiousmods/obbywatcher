@@ -7,13 +7,14 @@ or administer the transcoder.
 
 ## Features
 
-- React + TypeScript frontend built with Vite.
+- React + TypeScript frontend built with Vite and Tailwind CSS.
 - HLS playback through `hls.js`, with native HLS fallback for Safari and iOS.
-- Custom player controls for play/pause, sound, volume, live edge, mirror
-  selection, retry, hard reconnect, stats, theater mode, fullscreen, and
-  picture-in-picture.
-- Aggressive automatic recovery for stale manifests, stalled playback, media
-  errors, network errors, and browser offline/online transitions.
+- Dark pastel interface with purple accents and custom auto-hide player
+  controls for play/pause, sound, volume, live edge, retry, settings, stats,
+  fullscreen, and picture-in-picture.
+- Compatibility-first automatic recovery for stale manifests, persistent
+  stalled playback, media errors, network errors, and browser offline/online
+  transitions.
 - Active HLS manifest probing to choose the freshest healthy mirror during
   reconnects.
 - Mirror failover between `live.obnoxious.lol` and `fight.nswfiles.com`.

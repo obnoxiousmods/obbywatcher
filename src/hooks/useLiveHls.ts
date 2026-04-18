@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
+import type { HlsConfig } from "hls.js";
 import type { StreamMirror } from "../config/stream";
 import {
   chooseFreshestProbe,
@@ -80,14 +81,14 @@ export type LiveHlsController = {
 const defaultOptions: Required<LiveHlsOptions> = {
   autoPlay: true,
   forceAutoplayAudio: true,
-  backoffBaseMs: 150,
-  backoffMaxMs: 8_000,
-  jitterRatio: 0.18,
-  healthIntervalMs: 750,
-  staleTargetDurations: 1.75,
-  stallTimeoutMs: 2_500,
-  mirrorFailureThreshold: 1,
-  probeTimeoutMs: 2_200
+  backoffBaseMs: 500,
+  backoffMaxMs: 30_000,
+  jitterRatio: 0.22,
+  healthIntervalMs: 1_000,
+  staleTargetDurations: 4,
+  stallTimeoutMs: 8_000,
+  mirrorFailureThreshold: 2,
+  probeTimeoutMs: 3_500
 };
 
 const initialSnapshot: LiveHlsSnapshot = {
@@ -178,6 +179,24 @@ function probeSnapshotFromResult(probe: ManifestProbe, mirrors: readonly StreamM
     sequence: probe.endSequence ?? probe.mediaSequence,
     fetchedAtMs: probe.fetchedAtMs,
     error: null
+  };
+}
+
+export function createStableHlsConfig(): Partial<HlsConfig> {
+  return {
+    lowLatencyMode: false,
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: 8,
+    maxLiveSyncPlaybackRate: 1.1,
+    backBufferLength: 90,
+    maxBufferLength: 60,
+    maxBufferHole: 0.5,
+    manifestLoadingTimeOut: 8_000,
+    manifestLoadingMaxRetry: 2,
+    levelLoadingTimeOut: 8_000,
+    levelLoadingMaxRetry: 2,
+    fragLoadingTimeOut: 12_000,
+    fragLoadingMaxRetry: 3
   };
 }
 
@@ -398,21 +417,7 @@ export function useLiveHls(
     function attachHlsSource(source: string) {
       destroyHls();
 
-      hls = new Hls({
-        lowLatencyMode: true,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        maxLiveSyncPlaybackRate: 1.5,
-        backBufferLength: 30,
-        maxBufferLength: 20,
-        maxBufferHole: 0.25,
-        manifestLoadingTimeOut: 3_500,
-        manifestLoadingMaxRetry: 0,
-        levelLoadingTimeOut: 3_500,
-        levelLoadingMaxRetry: 0,
-        fragLoadingTimeOut: 5_000,
-        fragLoadingMaxRetry: 1
-      });
+      hls = new Hls(createStableHlsConfig());
 
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
         hls?.loadSource(source);
@@ -460,14 +465,8 @@ export function useLiveHls(
         const label = hlsErrorLabel(data);
 
         if (!data.fatal) {
-          if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
-            consecutiveSourceFailures += 1;
-            scheduleReconnect(label);
-            return;
-          }
-
           publish({
-            status: "connecting",
+            status: data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ? "buffering" : "connecting",
             lastError: label
           });
           return;
