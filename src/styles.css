@@ -292,12 +292,106 @@
     @apply flex flex-wrap items-center justify-end gap-2;
   }
 
+  .custom-select {
+    @apply relative;
+  }
+
   .theme-picker {
     @apply inline-flex min-h-9 items-center gap-2 rounded-lg border border-ow-border bg-white/5 px-2.5 py-1.5 text-[13px] text-ow-muted;
   }
 
-  .theme-picker select {
-    @apply min-h-7 rounded-md border border-ow-border bg-ow-bg px-2 text-ow-text;
+  .custom-select-label {
+    @apply shrink-0 text-[12px] font-bold text-ow-muted;
+  }
+
+  .custom-select-trigger {
+    @apply inline-flex min-h-7 min-w-[150px] items-center justify-between gap-2 rounded-md border border-ow-border bg-ow-bg/90 px-2.5 text-left text-[13px] font-bold text-ow-text transition;
+  }
+
+  .custom-select-trigger:hover,
+  .custom-select-trigger[aria-expanded="true"] {
+    @apply border-ow-lavender/65 bg-white/8;
+  }
+
+  .custom-select-trigger span:first-child {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .custom-select-chevron {
+    @apply h-2 w-2 shrink-0 rotate-45 border-b-2 border-r-2 border-ow-lavender transition;
+    margin-top: -3px;
+  }
+
+  .custom-select-trigger[aria-expanded="true"] .custom-select-chevron {
+    @apply rotate-[225deg];
+    margin-top: 3px;
+  }
+
+  .custom-select-menu {
+    @apply absolute right-0 top-[calc(100%+8px)] z-50 grid max-h-[320px] min-w-full gap-1 overflow-auto rounded-lg border border-ow-border bg-ow-panel-soft/98 p-1.5;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+  }
+
+  .custom-select-option {
+    @apply grid min-h-9 min-w-[190px] cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] font-bold text-ow-text transition;
+  }
+
+  .custom-select-option:hover,
+  .custom-select-option.selected {
+    @apply bg-ow-lavender/14 text-ow-text;
+  }
+
+  .custom-select-option[aria-selected="true"] {
+    @apply border border-ow-lavender/45;
+  }
+
+  .custom-select-option small {
+    @apply col-start-2 -mt-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-normal text-ow-muted;
+  }
+
+  .theme-dot {
+    @apply h-3 w-3 rounded-full border border-white/25;
+  }
+
+  .theme-dot-lavender {
+    background: #cdb7ff;
+  }
+
+  .theme-dot-moonmint {
+    background: #a8f0da;
+  }
+
+  .theme-dot-roseglass {
+    background: #ffadc8;
+  }
+
+  .theme-dot-skyline {
+    background: #a9d7ff;
+  }
+
+  .theme-dot-peach {
+    background: #ffc8a8;
+  }
+
+  .theme-dot-lilac {
+    background: #d8b4fe;
+  }
+
+  .theme-dot-sage {
+    background: #bde8b5;
+  }
+
+  .theme-dot-butter {
+    background: #f6e8a8;
+  }
+
+  .theme-dot-coral {
+    background: #ffb0a8;
+  }
+
+  .theme-dot-periwinkle {
+    background: #b9c7ff;
   }
 
   .chip,
@@ -442,7 +536,7 @@
   }
 
   .player-controls {
-    @apply absolute inset-x-0 bottom-0 grid gap-2 px-3 pb-3 pt-16 transition;
+    @apply absolute inset-x-0 bottom-0 z-20 grid gap-2 px-3 pb-3 pt-16 transition;
     background: linear-gradient(180deg, transparent, rgba(8, 7, 13, 0.58) 30%, rgba(8, 7, 13, 0.94));
   }
 
@@ -536,7 +630,7 @@
   }
 
   .more-menu {
-    @apply absolute bottom-[78px] right-3 grid w-[min(380px,calc(100%-24px))] gap-3 rounded-lg border border-ow-border bg-ow-panel-soft/96 p-3;
+    @apply absolute bottom-[78px] right-3 z-50 grid w-[min(380px,calc(100%-24px))] gap-3 rounded-lg border border-ow-border bg-ow-panel-soft/96 p-3;
     box-shadow: var(--shadow);
     backdrop-filter: blur(18px);
   }
@@ -545,8 +639,12 @@
     @apply w-full justify-between;
   }
 
-  .menu-field select {
-    @apply min-h-8 w-[210px] rounded-md border border-ow-border bg-ow-bg px-2 text-ow-text;
+  .menu-field .custom-select-trigger {
+    @apply min-w-[220px];
+  }
+
+  .mirror-menu {
+    @apply left-auto right-0;
   }
 
   .menu-actions {
@@ -763,6 +861,21 @@
     min-width: calc(50% - 4px);
   }
 
+  .theme-picker {
+    width: 100%;
+  }
+
+  .theme-picker .custom-select-trigger {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .theme-menu {
+    left: 0;
+    right: auto;
+    width: 100%;
+  }
+
   .watch-titlebar {
     align-items: flex-start;
     flex-direction: column;
@@ -826,7 +939,9 @@
   }
 
   .more-menu {
-    bottom: 94px;
+    bottom: 10px;
+    max-height: calc(100% - 20px);
+    overflow-y: auto;
     right: 10px;
     width: calc(100% - 20px);
   }
@@ -836,6 +951,22 @@
   .slot-row,
   .mirror-row {
     grid-template-columns: 1fr;
+  }
+
+  .menu-field {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .menu-field .custom-select-trigger {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .mirror-menu {
+    left: 0;
+    right: auto;
+    width: 100%;
   }
 
   .featured-fight {

@@ -5,7 +5,10 @@ test("loads the viewer shell", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Live Fight Stream" })).toBeVisible();
   await expect(page.getByLabel("Theme")).toBeVisible();
-  await expect(page.getByLabel("Theme").locator("option")).toHaveCount(10);
+  await expect(page.locator("select")).toHaveCount(0);
+  await page.getByLabel("Theme").click();
+  await expect(page.getByRole("listbox", { name: "Theme" }).getByRole("option")).toHaveCount(10);
+  await page.keyboard.press("Escape");
   await expect(page.getByText("UFC schedule").first()).toBeVisible();
   await expect(page.getByText("Burns vs. Malott").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
@@ -18,7 +21,8 @@ test("theme picker applies pastel themes", async ({ page }) => {
   const defaultAccent = await page
     .locator(".app-shell")
     .evaluate((element) => getComputedStyle(element).getPropertyValue("--color-ow-lavender").trim());
-  await page.getByLabel("Theme").selectOption("moonmint");
+  await page.getByLabel("Theme").click();
+  await page.getByRole("option", { name: "Moon Mint" }).click();
   await expect(page.locator(".app-shell")).toHaveAttribute("data-theme", "moonmint");
   const mintAccent = await page
     .locator(".app-shell")
@@ -36,11 +40,20 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   await page.getByRole("button", { name: "More" }).click();
   const menu = page.locator(".more-menu");
   await expect(menu.getByRole("button", { name: "Hard reconnect", exact: true })).toBeVisible();
-  await expect(menu.getByText("Mirror", { exact: true })).toBeVisible();
-  await menu.getByRole("button", { name: "Show stats" }).click();
-  await expect(page.getByLabel("Advanced diagnostics")).toContainText("Shortcut map");
+  await expect(menu.getByLabel("Mirror")).toBeVisible();
+  await menu.getByLabel("Mirror").click();
+  await expect(menu.getByRole("listbox", { name: "Mirror" }).getByRole("option")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "More" }).click();
+  const diagnostics = page.getByLabel("Advanced diagnostics");
+  const showStats = menu.getByRole("button", { name: "Show stats" });
+  if (await showStats.isVisible()) await showStats.click();
+  await expect(diagnostics).toContainText("Shortcut map");
 
   await expect(page.getByRole("button", { name: "Mute" })).toBeVisible();
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
   await page.keyboard.press("KeyM");
   await expect(page.getByRole("button", { name: "Unmute" })).toBeVisible();
 });

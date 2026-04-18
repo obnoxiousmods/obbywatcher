@@ -29,6 +29,7 @@ type PictureInPictureVideo = HTMLVideoElement & {
 };
 
 type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry";
+type OpenDropdown = "theme" | "mirror" | null;
 
 function PlayerIcon({ name }: { name: PlayerIconName }) {
   const commonProps = {
@@ -216,6 +217,7 @@ export default function App() {
   const [controlsVisible, setControlsVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState<OpenDropdown>(null);
   const hideControlsTimer = useRef<number | null>(null);
 
   const playerOptions = useMemo(
@@ -229,6 +231,7 @@ export default function App() {
     useLiveHls(videoRef, streamConfig.mirrors, playerOptions);
 
   const activeStatus = statusCopy(snapshot.status);
+  const activeTheme = themeOptions.find((theme) => theme.id === themeId) ?? themeOptions[0];
   const scheduleBuckets = useMemo(() => getScheduleBuckets(ufcSchedule, nowMs), [nowMs]);
   const featuredEvent = scheduleBuckets.current ?? scheduleBuckets.next ?? ufcSchedule[0];
   const playerBusy =
@@ -253,6 +256,16 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem("obbywatcher:theme", themeId);
   }, [themeId]);
+
+  useEffect(() => {
+    const closeOpenDropdown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-custom-select]")) return;
+      setOpenDropdown(null);
+    };
+
+    window.addEventListener("pointerdown", closeOpenDropdown);
+    return () => window.removeEventListener("pointerdown", closeOpenDropdown);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -422,6 +435,7 @@ export default function App() {
           break;
         case "escape":
           dispatch({ type: "set-more", open: false });
+          setOpenDropdown(null);
           break;
         case "arrowup":
           event.preventDefault();
@@ -481,23 +495,42 @@ export default function App() {
         </a>
 
         <nav className="top-actions" aria-label="Stream links">
-          <label className="theme-picker">
-            <span>Theme</span>
-            <select
+          <div className="theme-picker custom-select" data-custom-select>
+            <span className="custom-select-label">Theme</span>
+            <button
+              className="custom-select-trigger"
+              type="button"
               aria-label="Theme"
-              value={themeId}
-              onChange={(event) => {
-                const nextTheme = event.currentTarget.value;
-                if (isThemeId(nextTheme)) setThemeId(nextTheme);
+              aria-haspopup="listbox"
+              aria-expanded={openDropdown === "theme"}
+              onClick={() => {
+                setOpenDropdown((current) => (current === "theme" ? null : "theme"));
               }}
             >
-              {themeOptions.map((theme) => (
-                <option value={theme.id} key={theme.id}>
-                  {theme.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <span>{activeTheme.label}</span>
+              <span className="custom-select-chevron" aria-hidden="true" />
+            </button>
+            {openDropdown === "theme" ? (
+              <div className="custom-select-menu theme-menu" role="listbox" aria-label="Theme">
+                {themeOptions.map((theme) => (
+                  <button
+                    className={theme.id === themeId ? "custom-select-option selected" : "custom-select-option"}
+                    type="button"
+                    role="option"
+                    aria-selected={theme.id === themeId}
+                    key={theme.id}
+                    onClick={() => {
+                      setThemeId(theme.id);
+                      setOpenDropdown(null);
+                    }}
+                  >
+                    <span className={`theme-dot theme-dot-${theme.id}`} aria-hidden="true" />
+                    <span>{theme.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <a className="chip chip-live" href={activeMirror.streamUrl} target="_blank" rel="noreferrer">
             Open HLS
           </a>
@@ -659,77 +692,107 @@ export default function App() {
                   </div>
                 </div>
 
-                {ui.moreMenuOpen ? (
-                  <div className="more-menu" role="menu">
-                    <label className="menu-field">
-                      <span>Mirror</span>
-                      <select
-                        value={snapshot.activeMirrorIndex}
-                        onChange={(event) => switchMirror(Number(event.currentTarget.value))}
-                      >
+              </div>
+
+              {ui.moreMenuOpen ? (
+                <div className="more-menu" role="menu">
+                  <div className="menu-field custom-select mirror-select-control" data-custom-select>
+                    <span className="custom-select-label">Mirror</span>
+                    <button
+                      className="custom-select-trigger"
+                      type="button"
+                      aria-label="Mirror"
+                      aria-haspopup="listbox"
+                      aria-expanded={openDropdown === "mirror"}
+                      onClick={() => {
+                        setOpenDropdown((current) => (current === "mirror" ? null : "mirror"));
+                      }}
+                    >
+                      <span>
+                        {activeMirror.label} - {activeMirror.host}
+                      </span>
+                      <span className="custom-select-chevron" aria-hidden="true" />
+                    </button>
+                    {openDropdown === "mirror" ? (
+                      <div className="custom-select-menu mirror-menu" role="listbox" aria-label="Mirror">
                         {streamConfig.mirrors.map((mirror, index) => (
-                          <option value={index} key={mirror.id}>
-                            {mirror.label} - {mirror.host}
-                          </option>
+                          <button
+                            className={
+                              index === snapshot.activeMirrorIndex
+                                ? "custom-select-option selected"
+                                : "custom-select-option"
+                            }
+                            type="button"
+                            role="option"
+                            aria-selected={index === snapshot.activeMirrorIndex}
+                            key={mirror.id}
+                            onClick={() => {
+                              switchMirror(index);
+                              setOpenDropdown(null);
+                            }}
+                          >
+                            <span>{mirror.label}</span>
+                            <small>{mirror.host}</small>
+                          </button>
                         ))}
-                      </select>
-                    </label>
-
-                    <div className="menu-actions">
-                      <button className="button" type="button" onClick={hardReconnect}>
-                        Hard reconnect
-                      </button>
-                      <button className="button" type="button" onClick={copyStreamUrl}>
-                        Copy HLS
-                      </button>
-                      <button className="button" type="button" onClick={copyVlcCommand}>
-                        Copy VLC
-                      </button>
-                      <button className="button" type="button" onClick={copyMpvCommand}>
-                        Copy MPV
-                      </button>
-                      <button className="button" type="button" onClick={() => dispatch({ type: "toggle-stats" })}>
-                        {ui.statsOpen ? "Hide stats" : "Show stats"}
-                      </button>
-                    </div>
-
-                    {ui.statsOpen ? (
-                      <div className="menu-stats" aria-label="Advanced diagnostics">
-                        <div>
-                          <span>Mode</span>
-                          <strong>{snapshot.mode}</strong>
-                        </div>
-                        <div>
-                          <span>Latency</span>
-                          <strong>{formatSignedSeconds(snapshot.liveLatencySeconds)}</strong>
-                        </div>
-                        <div>
-                          <span>Sequence</span>
-                          <strong>{snapshot.currentSequence ?? "--"}</strong>
-                        </div>
-                        <div>
-                          <span>Target</span>
-                          <strong>{formatDuration(snapshot.targetDurationSeconds)}</strong>
-                        </div>
-                        <div>
-                          <span>Frames</span>
-                          <strong>
-                            {snapshot.decodedFrames ?? "--"} / {snapshot.droppedFrames ?? "--"}
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Retry</span>
-                          <strong>{retryEta(snapshot.nextRetryAtMs)}</strong>
-                        </div>
-                        <div>
-                          <span>Shortcut map</span>
-                          <strong>Space, M, F, P, R</strong>
-                        </div>
                       </div>
                     ) : null}
                   </div>
-                ) : null}
-              </div>
+
+                  <div className="menu-actions">
+                    <button className="button" type="button" onClick={hardReconnect}>
+                      Hard reconnect
+                    </button>
+                    <button className="button" type="button" onClick={copyStreamUrl}>
+                      Copy HLS
+                    </button>
+                    <button className="button" type="button" onClick={copyVlcCommand}>
+                      Copy VLC
+                    </button>
+                    <button className="button" type="button" onClick={copyMpvCommand}>
+                      Copy MPV
+                    </button>
+                    <button className="button" type="button" onClick={() => dispatch({ type: "toggle-stats" })}>
+                      {ui.statsOpen ? "Hide stats" : "Show stats"}
+                    </button>
+                  </div>
+
+                  {ui.statsOpen ? (
+                    <div className="menu-stats" aria-label="Advanced diagnostics">
+                      <div>
+                        <span>Mode</span>
+                        <strong>{snapshot.mode}</strong>
+                      </div>
+                      <div>
+                        <span>Latency</span>
+                        <strong>{formatSignedSeconds(snapshot.liveLatencySeconds)}</strong>
+                      </div>
+                      <div>
+                        <span>Sequence</span>
+                        <strong>{snapshot.currentSequence ?? "--"}</strong>
+                      </div>
+                      <div>
+                        <span>Target</span>
+                        <strong>{formatDuration(snapshot.targetDurationSeconds)}</strong>
+                      </div>
+                      <div>
+                        <span>Frames</span>
+                        <strong>
+                          {snapshot.decodedFrames ?? "--"} / {snapshot.droppedFrames ?? "--"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Retry</span>
+                        <strong>{retryEta(snapshot.nextRetryAtMs)}</strong>
+                      </div>
+                      <div>
+                        <span>Shortcut map</span>
+                        <strong>Space, M, F, P, R</strong>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="signal-strip" aria-label="Playback health">
