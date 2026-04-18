@@ -302,7 +302,7 @@ export default function App() {
     setControlsVisible(true);
     if (hideControlsTimer.current !== null) window.clearTimeout(hideControlsTimer.current);
     if (!playing || playerBusy || ui.moreMenuOpen) return;
-    hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 2500);
+    hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 1100);
   }, [playerBusy, playing, ui.moreMenuOpen]);
 
   useEffect(() => {
