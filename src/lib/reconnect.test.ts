@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  chooseFreshestProbe,
   getBufferedAhead,
   isPlaylistStale,
   nextMirrorIndex,
+  parseHlsManifest,
   retryDelayMs,
   shouldRotateMirror,
   sourceWithCacheBust
@@ -63,5 +65,61 @@ describe("reconnect policy", () => {
     expect(sourceWithCacheBust("https://example.com/live.m3u8?a=1", "abc")).toBe(
       "https://example.com/live.m3u8?a=1&ow=abc"
     );
+  });
+
+  it("parses live HLS manifests for active probing", () => {
+    const parsed = parseHlsManifest(`#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:120
+#EXTINF:4.000,
+seg120.ts
+#EXTINF:4.000,
+seg121.ts
+#EXTINF:4.000,
+seg122.ts`);
+
+    expect(parsed).toEqual({
+      mediaSequence: 120,
+      targetDurationSeconds: 4,
+      segmentCount: 3,
+      endSequence: 122,
+      isLive: true
+    });
+  });
+
+  it("chooses the freshest healthy manifest probe", () => {
+    expect(
+      chooseFreshestProbe([
+        {
+          ok: false,
+          mirrorIndex: 0,
+          url: "https://a.test/live.m3u8",
+          fetchedAtMs: 10,
+          error: "timeout"
+        },
+        {
+          ok: true,
+          mirrorIndex: 1,
+          url: "https://b.test/live.m3u8",
+          fetchedAtMs: 12,
+          mediaSequence: 90,
+          targetDurationSeconds: 4,
+          segmentCount: 3,
+          endSequence: 92,
+          isLive: true
+        },
+        {
+          ok: true,
+          mirrorIndex: 0,
+          url: "https://a.test/live.m3u8",
+          fetchedAtMs: 11,
+          mediaSequence: 88,
+          targetDurationSeconds: 4,
+          segmentCount: 3,
+          endSequence: 90,
+          isLive: true
+        }
+      ])?.mirrorIndex
+    ).toBe(1);
   });
 });

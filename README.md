@@ -9,11 +9,16 @@ or administer the transcoder.
 
 - React + TypeScript frontend built with Vite.
 - HLS playback through `hls.js`, with native HLS fallback for Safari and iOS.
-- Automatic recovery for stale manifests, stalled playback, media errors, and
-  network errors.
+- Custom player controls for play/pause, sound, volume, live edge, mirror
+  selection, retry, hard reconnect, stats, theater mode, fullscreen, and
+  picture-in-picture.
+- Aggressive automatic recovery for stale manifests, stalled playback, media
+  errors, network errors, and browser offline/online transitions.
+- Active HLS manifest probing to choose the freshest healthy mirror during
+  reconnects.
 - Mirror failover between `live.obnoxious.lol` and `fight.nswfiles.com`.
-- Embedded chat dock, pop-out chat, copy/open stream controls, and bookmark
-  helper.
+- UFC schedule panel, source links, command copy helpers for VLC/MPV, and
+  embedded or pop-out chat.
 - Static deployment compatible with the current nginx root at
   `/var/www/live.obnoxious.lol`.
 
@@ -31,7 +36,7 @@ npm test
 npm run build
 ```
 
-Optional browser smoke tests:
+Browser smoke tests:
 
 ```sh
 npm run test:e2e
