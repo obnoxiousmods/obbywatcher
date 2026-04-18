@@ -3,43 +3,132 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
 
-    <title>ObbyWatcher - Live Fight Stream</title>
+    <title>ObbyWatcher | Live Fight Stream, Chat & HLS Mirror Player</title>
     <meta
       name="description"
-      content="Watch the live fight stream with a resilient HLS player, mirrors, chat, and stream recovery."
+      content="ObbyWatcher is a live fight stream viewer with HLS playback, mirror failover, chat, UFC schedule links, custom player controls, and stream recovery tools."
     />
-    <meta
-      name="keywords"
-      content="fight stream, live fight stream, saturday fight stream, combat sports live, HLS stream"
-    />
+    <meta name="application-name" content="ObbyWatcher" />
+    <meta name="apple-mobile-web-app-title" content="ObbyWatcher" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <meta name="googlebot" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#08070d" />
     <link rel="canonical" href="https://live.obnoxious.lol/" />
+    <link rel="alternate" href="https://fight.nswfiles.com/" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="preconnect" href="https://images.unsplash.com" />
+    <link rel="preconnect" href="https://chat.obnoxious.lol" />
+    <link rel="dns-prefetch" href="https://fight.nswfiles.com" />
 
     <meta property="og:site_name" content="ObbyWatcher" />
-    <meta property="og:title" content="ObbyWatcher - Live Fight Stream" />
-    <meta property="og:description" content="Live fight stream with mirrors, chat, and automatic recovery." />
+    <meta property="og:title" content="ObbyWatcher | Live Fight Stream, Chat & HLS Mirror Player" />
+    <meta
+      property="og:description"
+      content="Watch the live fight stream with a custom HLS player, mirror failover, chat, UFC schedule links, and stream recovery tools."
+    />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://live.obnoxious.lol/" />
+    <meta property="og:locale" content="en_US" />
     <meta
       property="og:image"
       content="https://images.unsplash.com/photo-1575747515871-2e323827539e?q=80&amp;w=1200&amp;auto=format&amp;fit=crop"
     />
+    <meta property="og:image:secure_url" content="https://images.unsplash.com/photo-1575747515871-2e323827539e?q=80&amp;w=1200&amp;auto=format&amp;fit=crop" />
+    <meta property="og:image:alt" content="A boxing ring used as the ObbyWatcher live fight stream preview image." />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="ObbyWatcher - Live Fight Stream" />
-    <meta name="twitter:description" content="Live fight stream with mirrors, chat, and automatic recovery." />
+    <meta name="twitter:title" content="ObbyWatcher | Live Fight Stream, Chat & HLS Mirror Player" />
+    <meta
+      name="twitter:description"
+      content="Live fight stream viewer with HLS playback, mirrors, chat, UFC schedule links, custom controls, and recovery tools."
+    />
     <meta name="twitter:site" content="@obnoxiousMods" />
-    <meta name="theme-color" content="#050506" />
+    <meta name="twitter:creator" content="@obnoxiousMods" />
+    <meta
+      name="twitter:image"
+      content="https://images.unsplash.com/photo-1575747515871-2e323827539e?q=80&amp;w=1200&amp;auto=format&amp;fit=crop"
+    />
+    <meta name="twitter:image:alt" content="A boxing ring used as the ObbyWatcher live fight stream preview image." />
 
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "WebSite",
-        "name": "ObbyWatcher",
-        "url": "https://live.obnoxious.lol/",
-        "description": "A live fight stream viewer with HLS playback, mirrors, and chat.",
-        "inLanguage": "en"
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://live.obnoxious.lol/#website",
+            "name": "ObbyWatcher",
+            "url": "https://live.obnoxious.lol/",
+            "description": "A live fight stream viewer with HLS playback, mirror failover, chat, UFC schedule links, custom player controls, and stream recovery tools.",
+            "inLanguage": "en-US",
+            "publisher": {
+              "@id": "https://live.obnoxious.lol/#organization"
+            },
+            "sameAs": [
+              "https://fight.nswfiles.com/",
+              "https://github.com/obnoxiousmods/obbywatcher",
+              "https://twitter.com/obnoxiousMods"
+            ]
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://live.obnoxious.lol/#webpage",
+            "url": "https://live.obnoxious.lol/",
+            "name": "ObbyWatcher | Live Fight Stream, Chat & HLS Mirror Player",
+            "description": "Watch the live fight stream with a custom HLS player, mirror failover, chat, UFC schedule links, and stream recovery tools.",
+            "isPartOf": {
+              "@id": "https://live.obnoxious.lol/#website"
+            },
+            "primaryImageOfPage": {
+              "@id": "https://live.obnoxious.lol/#primaryimage"
+            },
+            "inLanguage": "en-US"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://live.obnoxious.lol/#app",
+            "name": "ObbyWatcher",
+            "url": "https://live.obnoxious.lol/",
+            "applicationCategory": "MultimediaApplication",
+            "operatingSystem": "Any modern browser",
+            "browserRequirements": "Requires JavaScript and HLS-capable media playback.",
+            "description": "A React HLS stream viewer with custom video controls, mirror failover, chat, UFC schedule links, pastel themes, and stream recovery tools.",
+            "featureList": [
+              "Custom HLS player controls",
+              "Mirror failover",
+              "Embedded live chat",
+              "UFC schedule links",
+              "Pastel theme picker",
+              "Stream recovery tools"
+            ],
+            "isAccessibleForFree": true
+          },
+          {
+            "@type": "ImageObject",
+            "@id": "https://live.obnoxious.lol/#primaryimage",
+            "url": "https://images.unsplash.com/photo-1575747515871-2e323827539e?q=80&w=1200&auto=format&fit=crop",
+            "width": 1200,
+            "height": 630,
+            "caption": "A boxing ring used as the ObbyWatcher live fight stream preview image."
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://live.obnoxious.lol/#organization",
+            "name": "Obnoxious Mods",
+            "url": "https://live.obnoxious.lol/",
+            "sameAs": [
+              "https://twitter.com/obnoxiousMods",
+              "https://github.com/obnoxiousmods/obbywatcher"
+            ]
+          }
+        ]
       }
     </script>
   </head>

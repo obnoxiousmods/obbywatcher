@@ -1,0 +1,13 @@
+{
+  "name": "ObbyWatcher",
+  "short_name": "ObbyWatcher",
+  "description": "Live fight stream viewer with HLS playback, mirrors, chat, UFC schedule links, and stream recovery tools.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08070d",
+  "theme_color": "#cdb7ff",
+  "categories": ["entertainment", "sports", "video"],
+  "lang": "en-US",
+  "orientation": "any"
+}
