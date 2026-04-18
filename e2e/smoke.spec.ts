@@ -58,6 +58,51 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Unmute" })).toBeVisible();
 });
 
+test("double clicking the player toggles fullscreen", async ({ page }) => {
+  await page.addInitScript(() => {
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement
+    });
+    Object.defineProperty(Element.prototype, "requestFullscreen", {
+      configurable: true,
+      value: async function requestFullscreen() {
+        fullscreenElement = this;
+        Reflect.set(window, "__requestFullscreenCalls", Number(Reflect.get(window, "__requestFullscreenCalls") ?? 0) + 1);
+        document.dispatchEvent(new Event("fullscreenchange"));
+      }
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: async () => {
+        fullscreenElement = null;
+        Reflect.set(window, "__exitFullscreenCalls", Number(Reflect.get(window, "__exitFullscreenCalls") ?? 0) + 1);
+        document.dispatchEvent(new Event("fullscreenchange"));
+      }
+    });
+  });
+
+  await page.goto("/");
+  const player = page.locator(".player-shell");
+  await expect(player).toBeVisible();
+  const box = await player.boundingBox();
+  expect(box).not.toBeNull();
+  const doubleClickPoint = {
+    x: Math.max(20, box!.width - 32),
+    y: Math.max(24, Math.min(86, box!.height * 0.35))
+  };
+
+  await player.dblclick({ position: doubleClickPoint });
+  await expect(player).toHaveClass(/is-fullscreen/);
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, "__requestFullscreenCalls"))).toBe(1);
+  await page.waitForTimeout(100);
+
+  await player.dblclick({ position: doubleClickPoint });
+  await expect(player).not.toHaveClass(/is-fullscreen/);
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, "__exitFullscreenCalls"))).toBe(1);
+});
+
 test("desktop keeps chat beside the stream", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");

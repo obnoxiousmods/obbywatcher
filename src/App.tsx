@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { streamConfig } from "./config/stream";
 import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
 import type { ThemeId } from "./config/themes";
@@ -219,6 +220,9 @@ export default function App() {
   const [pictureInPicture, setPictureInPicture] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<OpenDropdown>(null);
   const hideControlsTimer = useRef<number | null>(null);
+  const playerClickTimer = useRef<number | null>(null);
+  const lastPlayerSurfaceClick = useRef<{ time: number; x: number; y: number } | null>(null);
+  const lastFullscreenToggleAt = useRef(0);
 
   const playerOptions = useMemo(
     () => ({
@@ -325,6 +329,12 @@ export default function App() {
     };
   }, [revealControls]);
 
+  useEffect(() => {
+    return () => {
+      if (playerClickTimer.current !== null) window.clearTimeout(playerClickTimer.current);
+    };
+  }, []);
+
   const copyText = useCallback((label: string, value: string) => {
     if (!navigator.clipboard?.writeText) {
       window.prompt(label, value);
@@ -390,6 +400,62 @@ export default function App() {
 
     await shell.requestFullscreen();
   }, []);
+
+  const clearPlayerClickTimer = useCallback(() => {
+    if (playerClickTimer.current === null) return;
+    window.clearTimeout(playerClickTimer.current);
+    playerClickTimer.current = null;
+  }, []);
+
+  const toggleFullscreenFromSurface = useCallback(() => {
+    const now = Date.now();
+    if (now - lastFullscreenToggleAt.current < 80) return;
+    lastFullscreenToggleAt.current = now;
+    clearPlayerClickTimer();
+    void toggleFullscreen();
+  }, [clearPlayerClickTimer, toggleFullscreen]);
+
+  const handlePlayerSurfaceClick = useCallback(
+    (event: MouseEvent<HTMLVideoElement>) => {
+      const now = Date.now();
+      const previous = lastPlayerSurfaceClick.current;
+      const distance = previous
+        ? Math.hypot(event.clientX - previous.x, event.clientY - previous.y)
+        : Number.POSITIVE_INFINITY;
+      const isDoubleClick = event.detail > 1 || (previous !== null && now - previous.time < 320 && distance < 48);
+
+      if (isDoubleClick) {
+        event.preventDefault();
+        lastPlayerSurfaceClick.current = null;
+        toggleFullscreenFromSurface();
+        return;
+      }
+
+      lastPlayerSurfaceClick.current = { time: now, x: event.clientX, y: event.clientY };
+      clearPlayerClickTimer();
+      playerClickTimer.current = window.setTimeout(() => {
+        playerClickTimer.current = null;
+        lastPlayerSurfaceClick.current = null;
+        void togglePlayback();
+      }, 300);
+    },
+    [clearPlayerClickTimer, toggleFullscreenFromSurface, togglePlayback]
+  );
+
+  const handlePlayerSurfaceDoubleClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("button,a,input,[data-custom-select],.more-menu,.audio-prompt")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      toggleFullscreenFromSurface();
+    },
+    [toggleFullscreenFromSurface]
+  );
 
   const togglePictureInPicture = useCallback(async () => {
     const pipDocument = document as PictureInPictureDocument;
@@ -567,6 +633,7 @@ export default function App() {
               onMouseMove={revealControls}
               onPointerDown={revealControls}
               onFocus={revealControls}
+              onDoubleClick={handlePlayerSurfaceDoubleClick}
             >
               <video
                 ref={videoRef}
@@ -575,7 +642,7 @@ export default function App() {
                 playsInline
                 preload="auto"
                 poster={streamConfig.imageUrl}
-                onClick={() => void togglePlayback()}
+                onClick={handlePlayerSurfaceClick}
               />
 
               <div className="player-topline">
