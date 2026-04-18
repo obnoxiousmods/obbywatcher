@@ -29,6 +29,8 @@
   html {
     min-height: 100%;
     background: #08070d;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   body {
@@ -51,6 +53,7 @@
 
   button {
     border: 0;
+    touch-action: manipulation;
   }
 
   img,
@@ -263,6 +266,7 @@
     @apply sticky top-0 z-40 mx-auto flex w-[min(1560px,calc(100%-24px))] items-center justify-between gap-3 py-3;
     background: var(--theme-topbar);
     backdrop-filter: blur(18px);
+    padding-top: max(0.75rem, env(safe-area-inset-top));
   }
 
   .brand {
@@ -426,7 +430,7 @@
   }
 
   .button-small {
-    @apply min-h-8 px-2.5 py-1.5 text-[13px];
+    @apply min-h-9 px-2.5 py-1.5 text-[13px];
   }
 
   .page-layout {
@@ -434,7 +438,7 @@
   }
 
   .watch-row {
-    @apply grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)];
+    @apply grid items-stretch gap-4;
   }
 
   .watch,
@@ -452,6 +456,11 @@
   .watch-titlebar,
   .panel-heading {
     @apply flex items-center justify-between gap-3 border-b border-ow-border bg-white/[0.035] px-4 py-3;
+  }
+
+  .watch-titlebar > div,
+  .panel-heading > div {
+    @apply min-w-0;
   }
 
   .kicker {
@@ -555,7 +564,7 @@
   }
 
   .live-chip {
-    @apply min-h-7 gap-1.5 rounded-md px-2 py-1 text-[11px] font-black;
+    @apply min-h-9 gap-1.5 rounded-md px-2 py-1 text-[11px] font-black;
   }
 
   .live-chip span {
@@ -832,37 +841,112 @@
   }
 }
 
-@media (max-width: 1023px) {
+@media (min-width: 900px) {
+  .watch-row {
+    grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 430px);
+  }
+}
+
+@media (max-width: 899px) {
+  .topbar {
+    gap: 10px;
+  }
+
+  .top-actions {
+    -webkit-overflow-scrolling: touch;
+    flex: 1;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    min-width: 0;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .top-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chip {
+    flex: 0 0 auto;
+    min-width: auto;
+    scroll-snap-align: start;
+  }
+
+  .theme-picker {
+    flex: 0 0 220px;
+    width: auto;
+    scroll-snap-align: start;
+  }
+
+  .custom-select-trigger,
+  .button-small {
+    min-height: 40px;
+  }
+
+  .theme-menu {
+    left: 12px;
+    max-height: min(360px, calc(100vh - 88px));
+    min-width: 0;
+    position: fixed;
+    right: 12px;
+    top: max(72px, env(safe-area-inset-top));
+    width: auto;
+  }
+
   .chat-panel {
-    min-height: 520px;
+    min-height: clamp(420px, 58vh, 560px);
   }
 
   .chat-panel iframe {
-    min-height: 464px;
+    min-height: clamp(360px, 52vh, 500px);
   }
 }
 
 @media (max-width: 720px) {
   .topbar,
   .page-layout {
-    width: min(100% - 20px, 1560px);
+    width: min(100% - 16px, 1560px);
   }
 
   .topbar {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+    gap: 8px;
+    padding-bottom: 8px;
   }
 
-  .top-actions {
+  .brand {
+    width: 100%;
+  }
+
+  .brand-mark {
+    height: 38px;
+    width: 38px;
+  }
+
+  .brand small {
+    max-width: calc(100vw - 86px);
+    font-size: 12px;
+  }
+
+  .heading-actions {
     justify-content: flex-start;
   }
 
+  .top-actions {
+    gap: 6px;
+  }
+
   .chip {
-    min-width: calc(50% - 4px);
+    min-height: 40px;
   }
 
   .theme-picker {
-    width: 100%;
+    flex: 0 0 min(220px, calc(100vw - 16px));
+    padding: 3px 4px;
+    min-height: 40px;
   }
 
   .theme-picker .custom-select-trigger {
@@ -870,23 +954,28 @@
     flex: 1;
   }
 
+  .custom-select-trigger,
+  .button-small {
+    min-height: 40px;
+  }
+
   .theme-menu {
-    left: 0;
-    right: auto;
-    width: 100%;
+    left: 8px;
+    max-height: min(360px, calc(100vh - 112px));
+    right: 8px;
+    top: max(96px, env(safe-area-inset-top));
   }
 
   .watch-titlebar {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 10px 12px;
   }
 
   .status-badge {
+    min-height: 34px;
+    padding: 7px 9px;
     width: max-content;
-  }
-
-  .player-shell {
-    aspect-ratio: 4 / 3;
   }
 
   .center-play {
@@ -901,11 +990,17 @@
   }
 
   .player-controls {
-    padding: 42px 10px 10px;
+    gap: 6px;
+    padding: 18px 8px 8px;
   }
 
   .timeline-row {
     grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .live-chip {
+    min-height: 36px;
   }
 
   .latency-readout {
@@ -914,7 +1009,9 @@
 
   .control-bar {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 6px;
+    min-height: 0;
+    padding: 6px;
   }
 
   .control-left,
@@ -923,15 +1020,28 @@
   }
 
   .control-right {
-    justify-content: flex-start;
+    justify-content: space-between;
   }
 
   .volume-cluster {
-    min-width: 126px;
+    flex: 1;
+    min-height: 40px;
+    min-width: 0;
+    max-width: 152px;
   }
 
   .volume-cluster input {
-    width: 80px;
+    width: min(90px, 24vw);
+  }
+
+  .player-icon-button {
+    height: 40px;
+    width: 40px;
+  }
+
+  .primary-control {
+    height: 42px;
+    width: 42px;
   }
 
   .control-readout {
@@ -947,8 +1057,6 @@
   }
 
   .menu-actions,
-  .tool-grid,
-  .slot-row,
   .mirror-row {
     grid-template-columns: 1fr;
   }
@@ -970,11 +1078,71 @@
   }
 
   .featured-fight {
-    grid-template-columns: 1fr;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
   }
 
   .featured-fight img {
-    width: 100%;
-    height: 150px;
+    height: 74px;
+    width: 74px;
+  }
+
+  .schedule-body,
+  .utility-panel {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .utility-group {
+    padding: 10px;
+  }
+
+  .tool-button {
+    min-height: 58px;
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar,
+  .page-layout {
+    width: min(100% - 12px, 1560px);
+  }
+
+  .brand {
+    gap: 9px;
+  }
+
+  .brand small {
+    max-width: calc(100vw - 78px);
+  }
+
+  .watch-titlebar,
+  .panel-heading {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .status-badge {
+    font-size: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .player-topline > span:nth-child(2) {
+    display: none;
+  }
+
+  .volume-cluster input {
+    width: 64px;
+  }
+
+  .featured-fight {
+    grid-template-columns: 66px minmax(0, 1fr);
+  }
+
+  .featured-fight img {
+    height: 66px;
+    width: 66px;
   }
 }
