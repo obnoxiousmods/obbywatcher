@@ -1,0 +1,47 @@
+{
+  "name": "obbywatcher",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Modern public React viewer for the live.obnoxious.lol and fight.nswfiles.com HLS stream.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "keywords": [
+    "hls",
+    "livestream",
+    "react",
+    "video"
+  ],
+  "homepage": "https://live.obnoxious.lol/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/obnoxiousmods/obbywatcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/obnoxiousmods/obbywatcher/issues"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "hls.js": "^1.6.13",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.7.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.10",
+    "vitest": "^3.2.4"
+  }
+}
