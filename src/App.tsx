@@ -29,6 +29,17 @@ type PictureInPictureVideo = HTMLVideoElement & {
   requestPictureInPicture?: () => Promise<PictureInPictureWindow>;
 };
 
+type WebKitPresentationMode = "inline" | "fullscreen" | "picture-in-picture";
+
+type WebKitFullscreenVideo = HTMLVideoElement & {
+  webkitDisplayingFullscreen?: boolean;
+  webkitEnterFullscreen?: () => void;
+  webkitExitFullscreen?: () => void;
+  webkitPresentationMode?: WebKitPresentationMode;
+  webkitSetPresentationMode?: (mode: WebKitPresentationMode) => void;
+  webkitSupportsFullscreen?: boolean;
+};
+
 type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry";
 type OpenDropdown = "theme" | "mirror" | null;
 
@@ -206,6 +217,58 @@ function percent(value: number | null, max: number) {
   return Math.max(0, Math.min(100, (value / max) * 100));
 }
 
+function isWebKitFullscreen(video: WebKitFullscreenVideo | null) {
+  return Boolean(video?.webkitDisplayingFullscreen || video?.webkitPresentationMode === "fullscreen");
+}
+
+function enterWebKitFullscreen(video: WebKitFullscreenVideo | null) {
+  if (!video) return false;
+
+  if (video.webkitSetPresentationMode) {
+    try {
+      video.webkitSetPresentationMode("fullscreen");
+      return true;
+    } catch {
+      // Try the older iOS Safari API below.
+    }
+  }
+
+  if (video.webkitEnterFullscreen) {
+    try {
+      video.webkitEnterFullscreen();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function exitWebKitFullscreen(video: WebKitFullscreenVideo | null) {
+  if (!video) return false;
+
+  if (video.webkitSetPresentationMode && video.webkitPresentationMode === "fullscreen") {
+    try {
+      video.webkitSetPresentationMode("inline");
+      return true;
+    } catch {
+      // Try the older iOS Safari API below.
+    }
+  }
+
+  if (video.webkitExitFullscreen) {
+    try {
+      video.webkitExitFullscreen();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerShellRef = useRef<HTMLDivElement | null>(null);
@@ -310,9 +373,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const syncFullscreen = () => setFullscreen(document.fullscreenElement === playerShellRef.current);
+    const video = videoRef.current as WebKitFullscreenVideo | null;
+    const syncFullscreen = () => {
+      setFullscreen(document.fullscreenElement === playerShellRef.current || isWebKitFullscreen(video));
+    };
+
     document.addEventListener("fullscreenchange", syncFullscreen);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+    video?.addEventListener("webkitbeginfullscreen", syncFullscreen);
+    video?.addEventListener("webkitendfullscreen", syncFullscreen);
+    video?.addEventListener("webkitpresentationmodechanged", syncFullscreen);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      video?.removeEventListener("webkitbeginfullscreen", syncFullscreen);
+      video?.removeEventListener("webkitendfullscreen", syncFullscreen);
+      video?.removeEventListener("webkitpresentationmodechanged", syncFullscreen);
+    };
   }, []);
 
   const revealControls = useCallback(() => {
@@ -391,6 +467,7 @@ export default function App() {
 
   const toggleFullscreen = useCallback(async () => {
     const shell = playerShellRef.current;
+    const video = videoRef.current as WebKitFullscreenVideo | null;
     if (!shell) return;
 
     if (document.fullscreenElement) {
@@ -398,7 +475,21 @@ export default function App() {
       return;
     }
 
-    await shell.requestFullscreen();
+    if (isWebKitFullscreen(video)) {
+      if (exitWebKitFullscreen(video)) setFullscreen(false);
+      return;
+    }
+
+    if (document.fullscreenEnabled !== false && shell.requestFullscreen) {
+      try {
+        await shell.requestFullscreen();
+        return;
+      } catch {
+        // iOS Safari may reject element fullscreen while still allowing video fullscreen below.
+      }
+    }
+
+    if (enterWebKitFullscreen(video)) setFullscreen(true);
   }, []);
 
   const clearPlayerClickTimer = useCallback(() => {

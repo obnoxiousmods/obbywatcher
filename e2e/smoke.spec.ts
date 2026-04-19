@@ -40,11 +40,11 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   await page.getByRole("button", { name: "More" }).click();
   const menu = page.locator(".more-menu");
   await expect(menu.getByRole("button", { name: "Hard reconnect", exact: true })).toBeVisible();
-  await expect(menu.getByLabel("Mirror")).toBeVisible();
-  await menu.getByLabel("Mirror").click();
+  const mirrorPicker = menu.getByRole("button", { name: "Mirror", exact: true });
+  await expect(mirrorPicker).toBeVisible();
+  await mirrorPicker.click();
   await expect(menu.getByRole("listbox", { name: "Mirror" }).getByRole("option")).toHaveCount(2);
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "More" }).click();
+  await mirrorPicker.click();
   const diagnostics = page.getByLabel("Advanced diagnostics");
   const showStats = menu.getByRole("button", { name: "Show stats" });
   if (await showStats.isVisible()) await showStats.click();
@@ -101,6 +101,59 @@ test("double clicking the player toggles fullscreen", async ({ page }) => {
   await player.dblclick({ position: doubleClickPoint });
   await expect(player).not.toHaveClass(/is-fullscreen/);
   await expect.poll(() => page.evaluate(() => Reflect.get(window, "__exitFullscreenCalls"))).toBe(1);
+});
+
+test("fullscreen falls back to iOS video fullscreen APIs", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(document, "fullscreenEnabled", {
+      configurable: true,
+      value: false
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => null
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "webkitDisplayingFullscreen", {
+      configurable: true,
+      get() {
+        return Boolean(Reflect.get(this, "__webkitFullscreen"));
+      }
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "webkitPresentationMode", {
+      configurable: true,
+      get() {
+        return Reflect.get(this, "__webkitPresentationMode") ?? "inline";
+      }
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "webkitSetPresentationMode", {
+      configurable: true,
+      value(mode: string) {
+        Reflect.set(this, "__webkitPresentationMode", mode);
+        Reflect.set(this, "__webkitFullscreen", mode === "fullscreen");
+        Reflect.set(
+          window,
+          "__webkitSetPresentationModeCalls",
+          Number(Reflect.get(window, "__webkitSetPresentationModeCalls") ?? 0) + 1
+        );
+        this.dispatchEvent(new Event("webkitpresentationmodechanged"));
+        this.dispatchEvent(new Event(mode === "fullscreen" ? "webkitbeginfullscreen" : "webkitendfullscreen"));
+      }
+    });
+  });
+
+  await page.goto("/");
+  const player = page.locator(".player-shell");
+  await expect(player).toBeVisible();
+
+  await page.getByRole("button", { name: "Fullscreen" }).click();
+  await expect(player).toHaveClass(/is-fullscreen/);
+  await expect(page.getByRole("button", { name: "Exit fullscreen" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, "__webkitSetPresentationModeCalls"))).toBe(1);
+
+  await page.getByRole("button", { name: "Exit fullscreen" }).click();
+  await expect(player).not.toHaveClass(/is-fullscreen/);
+  await expect(page.getByRole("button", { name: "Fullscreen" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, "__webkitSetPresentationModeCalls"))).toBe(2);
 });
 
 test("desktop keeps chat beside the stream", async ({ page }) => {
