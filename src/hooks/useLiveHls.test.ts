@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createStableHlsConfig } from "./useLiveHls";
 
 describe("stable HLS config", () => {
-  it("uses compatibility-first live playback settings", () => {
+  it("uses hard-reconnect-first live playback settings", () => {
     const config = createStableHlsConfig();
 
     expect(config.lowLatencyMode).toBe(false);
@@ -10,7 +10,8 @@ describe("stable HLS config", () => {
     expect(config.liveMaxLatencyDurationCount).toBe(8);
     expect(config.maxLiveSyncPlaybackRate).toBe(1.1);
     expect(config.maxBufferLength).toBeGreaterThanOrEqual(60);
-    expect(config.manifestLoadingMaxRetry).toBeGreaterThanOrEqual(2);
-    expect(config.fragLoadingMaxRetry).toBeGreaterThanOrEqual(3);
+    expect(config.manifestLoadingMaxRetry).toBeLessThanOrEqual(1);
+    expect(config.levelLoadingMaxRetry).toBeLessThanOrEqual(1);
+    expect(config.fragLoadingMaxRetry).toBeLessThanOrEqual(1);
   });
 });

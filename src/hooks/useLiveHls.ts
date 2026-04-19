@@ -64,6 +64,7 @@ export type LiveHlsOptions = {
   staleTargetDurations?: number;
   stallTimeoutMs?: number;
   mirrorFailureThreshold?: number;
+  softRecoveryFailureThreshold?: number;
   probeTimeoutMs?: number;
 };
 
@@ -88,6 +89,7 @@ const defaultOptions: Required<LiveHlsOptions> = {
   staleTargetDurations: 4,
   stallTimeoutMs: 8_000,
   mirrorFailureThreshold: 2,
+  softRecoveryFailureThreshold: 1,
   probeTimeoutMs: 3_500
 };
 
@@ -192,11 +194,11 @@ export function createStableHlsConfig(): Partial<HlsConfig> {
     maxBufferLength: 60,
     maxBufferHole: 0.5,
     manifestLoadingTimeOut: 8_000,
-    manifestLoadingMaxRetry: 2,
+    manifestLoadingMaxRetry: 1,
     levelLoadingTimeOut: 8_000,
-    levelLoadingMaxRetry: 2,
+    levelLoadingMaxRetry: 1,
     fragLoadingTimeOut: 12_000,
-    fragLoadingMaxRetry: 3
+    fragLoadingMaxRetry: 1
   };
 }
 
@@ -232,6 +234,7 @@ export function useLiveHls(
     let recoveryCount = 0;
     let consecutiveSourceFailures = 0;
     let mediaRecoveryAttempts = 0;
+    let softRecoveryFailures = 0;
     let currentSequence: number | null = null;
     let lastSegmentAtMs: number | null = null;
     let lastSequenceAtMs: number | null = null;
@@ -277,6 +280,7 @@ export function useLiveHls(
         attempt = 0;
         consecutiveSourceFailures = 0;
         mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
         publish({ attempt: 0, lastError: null, nextRetryAtMs: null });
       }, 12_000);
     };
@@ -453,6 +457,7 @@ export function useLiveHls(
 
       hls.on(Hls.Events.FRAG_LOADED, () => {
         lastSegmentAtMs = Date.now();
+        softRecoveryFailures = 0;
         publish({
           status: video.paused ? "connecting" : "live",
           lastError: null,
@@ -465,20 +470,29 @@ export function useLiveHls(
         const label = hlsErrorLabel(data);
 
         if (!data.fatal) {
+          softRecoveryFailures += 1;
+
+          if (softRecoveryFailures >= opts.softRecoveryFailureThreshold) {
+            consecutiveSourceFailures += 1;
+            scheduleReconnect(`${label}; hard reconnect after soft recovery failure`);
+            return;
+          }
+
           publish({
             status: data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ? "buffering" : "connecting",
-            lastError: label
+            lastError: `${label}; soft recovery ${softRecoveryFailures}/${opts.softRecoveryFailureThreshold}`
           });
           return;
         }
 
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls && mediaRecoveryAttempts < 1) {
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls && mediaRecoveryAttempts < opts.softRecoveryFailureThreshold) {
           mediaRecoveryAttempts += 1;
+          softRecoveryFailures += 1;
           recoveryCount += 1;
           hls.recoverMediaError();
           publish({
             status: "reconnecting",
-            lastError: `${label}; recovering media pipeline`
+            lastError: `${label}; recovering media pipeline before hard reconnect`
           });
           return;
         }
@@ -507,6 +521,8 @@ export function useLiveHls(
       lastSequenceAtMs = Date.now();
       lastTimeUpdateAtMs = Date.now();
       lastObservedTime = video.currentTime;
+      mediaRecoveryAttempts = 0;
+      softRecoveryFailures = 0;
 
       publish({
         status: "connecting",
@@ -615,6 +631,8 @@ export function useLiveHls(
     const onPlaying = () => {
       lastTimeUpdateAtMs = Date.now();
       lastObservedTime = video.currentTime;
+      mediaRecoveryAttempts = 0;
+      softRecoveryFailures = 0;
       publish({
         status: "live",
         autoplayBlocked: false,
@@ -657,16 +675,22 @@ export function useLiveHls(
       retryNow: () => {
         attempt = 0;
         consecutiveSourceFailures = 0;
+        mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
         attachSource(activeMirrorIndex, "Manual retry.");
       },
       reload: () => {
         attempt = 0;
         consecutiveSourceFailures = 0;
+        mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
         attachSource(activeMirrorIndex, "Manual reload.");
       },
       hardReconnect: () => {
         attempt = 0;
         consecutiveSourceFailures = 0;
+        mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
         recoveryCount += 1;
         resetMediaElement();
         attachSource(activeMirrorIndex, "Manual hard reconnect.");
@@ -687,6 +711,8 @@ export function useLiveHls(
         if (index < 0 || index >= mirrors.length) return;
         attempt = 0;
         consecutiveSourceFailures = 0;
+        mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
         activeMirrorIndex = index;
         attachSource(activeMirrorIndex, "Mirror selected.");
       }
