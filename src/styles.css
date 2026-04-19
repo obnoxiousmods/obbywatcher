@@ -505,7 +505,20 @@
   .player-shell.is-fullscreen {
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     aspect-ratio: auto;
+  }
+
+  .player-shell.is-fullscreen .player-topline {
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    top: max(12px, env(safe-area-inset-top));
+  }
+
+  .player-shell.is-fullscreen .player-controls {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
   }
 
   .player {
@@ -622,12 +635,38 @@
   }
 
   .volume-cluster {
-    @apply flex min-w-[132px] items-center gap-1 rounded-md border border-white/8 bg-white/[0.045] px-1;
+    @apply relative flex min-w-0 items-center;
   }
 
-  .volume-cluster input {
-    @apply w-[86px];
+  .volume-toggle.active {
+    @apply border-ow-lavender/60 bg-ow-lavender/18;
+  }
+
+  .volume-panel {
+    @apply absolute bottom-[calc(100%+10px)] left-0 z-40 grid w-[220px] gap-2 rounded-lg border border-ow-border bg-ow-panel-soft/96 p-2;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+  }
+
+  .volume-mute-button {
+    @apply inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-ow-border bg-white/[0.055] px-3 text-[13px] font-black text-ow-text transition;
+  }
+
+  .volume-mute-button:hover {
+    @apply border-ow-lavender/60 bg-white/10;
+  }
+
+  .volume-slider-row {
+    @apply grid grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2 rounded-md border border-white/8 bg-black/28 px-2 py-2;
+  }
+
+  .volume-slider-row input {
+    @apply w-full;
     accent-color: var(--color-ow-lavender);
+  }
+
+  .volume-slider-row span {
+    @apply text-right text-[12px] font-black text-ow-muted;
   }
 
   .control-readout {
@@ -991,7 +1030,7 @@
 
   .player-controls {
     gap: 6px;
-    padding: 18px 8px 8px;
+    padding: 22px 8px 8px;
   }
 
   .timeline-row {
@@ -1008,7 +1047,7 @@
   }
 
   .control-bar {
-    grid-template-columns: 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 6px;
     min-height: 0;
     padding: 6px;
@@ -1016,32 +1055,32 @@
 
   .control-left,
   .control-right {
-    width: 100%;
+    width: auto;
   }
 
   .control-right {
-    justify-content: space-between;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .volume-cluster {
-    flex: 1;
-    min-height: 40px;
-    min-width: 0;
-    max-width: 152px;
+    flex: 0 0 auto;
   }
 
-  .volume-cluster input {
-    width: min(90px, 24vw);
+  .volume-panel {
+    bottom: calc(100% + 8px);
+    left: -48px;
+    width: min(224px, calc(100vw - 28px));
   }
 
   .player-icon-button {
-    height: 40px;
-    width: 40px;
+    height: 38px;
+    width: 38px;
   }
 
   .primary-control {
-    height: 42px;
-    width: 42px;
+    height: 40px;
+    width: 40px;
   }
 
   .control-readout {
@@ -1049,8 +1088,8 @@
   }
 
   .more-menu {
-    bottom: 10px;
-    max-height: calc(100% - 20px);
+    bottom: max(10px, env(safe-area-inset-bottom));
+    max-height: calc(100% - max(20px, calc(env(safe-area-inset-bottom) + 10px)));
     overflow-y: auto;
     right: 10px;
     width: calc(100% - 20px);

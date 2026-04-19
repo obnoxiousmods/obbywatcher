@@ -282,6 +282,7 @@ export default function App() {
   const [fullscreen, setFullscreen] = useState(false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<OpenDropdown>(null);
+  const [volumePanelOpen, setVolumePanelOpen] = useState(false);
   const hideControlsTimer = useRef<number | null>(null);
   const playerClickTimer = useRef<number | null>(null);
   const lastPlayerSurfaceClick = useRef<{ time: number; x: number; y: number } | null>(null);
@@ -332,6 +333,16 @@ export default function App() {
 
     window.addEventListener("pointerdown", closeOpenDropdown);
     return () => window.removeEventListener("pointerdown", closeOpenDropdown);
+  }, []);
+
+  useEffect(() => {
+    const closeVolumePanel = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-volume-control]")) return;
+      setVolumePanelOpen(false);
+    };
+
+    window.addEventListener("pointerdown", closeVolumePanel);
+    return () => window.removeEventListener("pointerdown", closeVolumePanel);
   }, []);
 
   useEffect(() => {
@@ -394,9 +405,9 @@ export default function App() {
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     if (hideControlsTimer.current !== null) window.clearTimeout(hideControlsTimer.current);
-    if (!playing || playerBusy || ui.moreMenuOpen) return;
+    if (!playing || playerBusy || ui.moreMenuOpen || volumePanelOpen) return;
     hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 1100);
-  }, [playerBusy, playing, ui.moreMenuOpen]);
+  }, [playerBusy, playing, ui.moreMenuOpen, volumePanelOpen]);
 
   useEffect(() => {
     revealControls();
@@ -593,6 +604,7 @@ export default function App() {
         case "escape":
           dispatch({ type: "set-more", open: false });
           setOpenDropdown(null);
+          setVolumePanelOpen(false);
           break;
         case "arrowup":
           event.preventDefault();
@@ -628,10 +640,21 @@ export default function App() {
   const copyStreamUrl = () => copyText("Stream URL", activeMirror.streamUrl);
   const copyVlcCommand = () => copyText("VLC command", `vlc ${activeMirror.streamUrl}`);
   const copyMpvCommand = () => copyText("MPV command", `mpv ${activeMirror.streamUrl}`);
+  const toggleVolumePanel = () => {
+    setOpenDropdown(null);
+    dispatch({ type: "set-more", open: false });
+    setVolumePanelOpen((open) => !open);
+  };
+  const toggleMoreMenu = () => {
+    setVolumePanelOpen(false);
+    dispatch({ type: "toggle-more" });
+  };
 
   const playerClass = [
     "player-shell",
-    controlsVisible || !playing || playerBusy || ui.moreMenuOpen ? "controls-visible" : "controls-hidden",
+    controlsVisible || !playing || playerBusy || ui.moreMenuOpen || volumePanelOpen
+      ? "controls-visible"
+      : "controls-hidden",
     fullscreen ? "is-fullscreen" : "",
     snapshot.autoplayBlocked ? "needs-audio" : ""
   ]
@@ -783,25 +806,46 @@ export default function App() {
                       <PlayerIcon name={playing ? "pause" : "play"} />
                     </button>
 
-                    <div className="volume-cluster">
+                    <div
+                      className={volumePanelOpen ? "volume-cluster volume-open" : "volume-cluster"}
+                      data-volume-control
+                    >
                       <button
-                        className="player-icon-button"
+                        className={volumePanelOpen ? "player-icon-button volume-toggle active" : "player-icon-button volume-toggle"}
                         type="button"
-                        onClick={toggleMute}
-                        aria-label={ui.muted ? "Unmute" : "Mute"}
-                        title={ui.muted ? "Unmute" : "Mute"}
+                        onClick={toggleVolumePanel}
+                        aria-expanded={volumePanelOpen}
+                        aria-controls="volume-panel"
+                        aria-label="Volume"
+                        title="Volume"
                       >
                         <PlayerIcon name={ui.muted ? "muted" : "volume"} />
                       </button>
-                      <input
-                        aria-label="Volume"
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        value={ui.muted ? 0 : ui.volume}
-                        onChange={(event) => setVolume(Number(event.currentTarget.value))}
-                      />
+                      {volumePanelOpen ? (
+                        <div className="volume-panel" id="volume-panel" role="group" aria-label="Volume controls">
+                          <button
+                            className="volume-mute-button"
+                            type="button"
+                            onClick={toggleMute}
+                            aria-label={ui.muted ? "Unmute" : "Mute"}
+                          >
+                            <PlayerIcon name={ui.muted ? "muted" : "volume"} />
+                            <span>{ui.muted ? "Unmute" : "Mute"}</span>
+                          </button>
+                          <div className="volume-slider-row">
+                            <input
+                              aria-label="Volume"
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={ui.muted ? 0 : ui.volume}
+                              onChange={(event) => setVolume(Number(event.currentTarget.value))}
+                            />
+                            <span>{Math.round((ui.muted ? 0 : ui.volume) * 100)}%</span>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     <span className="control-readout">
@@ -822,7 +866,7 @@ export default function App() {
                     <button
                       className={ui.moreMenuOpen ? "player-icon-button active" : "player-icon-button"}
                       type="button"
-                      onClick={() => dispatch({ type: "toggle-more" })}
+                      onClick={toggleMoreMenu}
                       aria-expanded={ui.moreMenuOpen}
                       aria-label="More"
                       title="More"

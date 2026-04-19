@@ -50,6 +50,11 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   if (await showStats.isVisible()) await showStats.click();
   await expect(diagnostics).toContainText("Shortcut map");
 
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await page.locator(".player-shell").dispatchEvent("pointerdown");
+  await page.getByRole("button", { name: "Volume" }).click();
+  await expect(page.getByRole("group", { name: "Volume controls" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mute" })).toBeVisible();
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();

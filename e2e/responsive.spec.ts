@@ -112,4 +112,32 @@ test.describe("responsive layout matrix", () => {
       expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
     });
   }
+
+  test("mobile volume popover stays inside the player", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    await page.getByRole("button", { name: "Volume" }).click();
+    const panel = page.getByRole("group", { name: "Volume controls" });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("slider", { name: "Volume" })).toBeVisible();
+
+    const bounds = await page.evaluate(() => {
+      const player = document.querySelector(".player-shell")?.getBoundingClientRect();
+      const volume = document.querySelector(".volume-panel")?.getBoundingClientRect();
+      if (!player || !volume) throw new Error("Missing player or volume panel");
+      return {
+        panelLeft: volume.left,
+        panelRight: volume.right,
+        panelTop: volume.top,
+        playerLeft: player.left,
+        playerRight: player.right,
+        playerTop: player.top
+      };
+    });
+
+    expect(bounds.panelLeft).toBeGreaterThanOrEqual(bounds.playerLeft - 1);
+    expect(bounds.panelRight).toBeLessThanOrEqual(bounds.playerRight + 1);
+    expect(bounds.panelTop).toBeGreaterThanOrEqual(bounds.playerTop - 1);
+  });
 });
