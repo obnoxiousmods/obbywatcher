@@ -117,7 +117,25 @@ seg122.ts`);
       mediaSequence: 120,
       targetDurationSeconds: 4,
       segmentCount: 3,
+      variantCount: 0,
       endSequence: 122,
+      isLive: true
+    });
+  });
+
+  it("treats HLS master playlists as viable live probes", () => {
+    const parsed = parseHlsManifest(`#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720
+720p/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=6200000,RESOLUTION=1920x1080
+1080p/index.m3u8`);
+
+    expect(parsed).toEqual({
+      mediaSequence: null,
+      targetDurationSeconds: 4,
+      segmentCount: 2,
+      variantCount: 2,
+      endSequence: null,
       isLive: true
     });
   });

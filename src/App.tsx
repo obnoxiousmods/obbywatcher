@@ -7,6 +7,13 @@ import type { ThemeId } from "./config/themes";
 import { ufcSchedule, ufcScheduleLastChecked } from "./config/ufcSchedule";
 import { useLiveHls } from "./hooks/useLiveHls";
 import type { LivePlaybackStatus } from "./hooks/useLiveHls";
+import { parseHlsManifest } from "./lib/reconnect";
+import {
+  decideAutoFallback,
+  nextFailureRecord,
+  type CandidateSource,
+  type FallbackDecision
+} from "./lib/sourceFallback";
 import {
   clampVolume,
   eventStartMs,
@@ -89,6 +96,18 @@ type OverlaySource = {
   kind: "public" | "configured" | "custom";
   id: string;
   label: string;
+};
+
+type SourceFailureRecord = {
+  failureCount: number;
+  lastFailureAtMs: number | null;
+  cooldownUntilMs: number | null;
+};
+
+type PublicProbeRecord = {
+  tone: SourceTone;
+  checkedAtMs: number;
+  reason: string;
 };
 
 declare global {
@@ -335,6 +354,10 @@ function publicPlaybackUrl(source: PublicSource) {
   return publicProxyUrl(source.url);
 }
 
+function publicSourceId(source: PublicSource, index: number) {
+  return source.id || `public-${index}`;
+}
+
 function hostLabelForUrl(value: string) {
   try {
     return new URL(value).host;
@@ -361,6 +384,31 @@ function publicCockpitSources(sources: ConfiguredSource[]) {
 
 function getViewerCount(viewers: ViewerCounts | null, sourceId: string, fallback = 0) {
   return Number(viewers?.by_source?.[sourceId] ?? fallback ?? 0);
+}
+
+async function probePublicPlaybackUrl(url: string, signal: AbortSignal): Promise<PublicProbeRecord> {
+  const resp = await fetch(url, {
+    cache: "no-store",
+    headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
+    signal
+  });
+  if (!resp.ok) {
+    return { tone: "red", checkedAtMs: Date.now(), reason: `HTTP ${resp.status}` };
+  }
+
+  const body = await resp.text();
+  const parsed = parseHlsManifest(body);
+  if (!parsed) {
+    return { tone: "red", checkedAtMs: Date.now(), reason: "not an HLS playlist" };
+  }
+  if (!parsed.isLive) {
+    return { tone: "red", checkedAtMs: Date.now(), reason: "playlist ended" };
+  }
+  if (parsed.segmentCount <= 0) {
+    return { tone: "yellow", checkedAtMs: Date.now(), reason: "playlist has no variants or segments yet" };
+  }
+
+  return { tone: "green", checkedAtMs: Date.now(), reason: "playlist available" };
 }
 
 function isWebKitFullscreen(video: WebKitFullscreenVideo | null) {
@@ -446,11 +494,15 @@ export default function App() {
   const publicBadSince = useRef<number | null>(null);
   const primaryRecoveredSince = useRef<number | null>(null);
   const lastAutoSwitchAt = useRef(0);
+  const sourceFailuresRef = useRef<Record<string, SourceFailureRecord>>({});
   const overlayFatalSince = useRef<number | null>(null);
   const publicProgressRef = useRef({ timeMs: 0, currentTime: 0, bufferedAhead: 0, readyState: 0 });
   const AUTO_SWITCH_DELAY = 10_000;
   const AUTO_RETURN_DELAY = 18_000;
+  const AUTO_SWITCH_COOLDOWN = 4_000;
+  const AUTO_SOURCE_COOLDOWN = 30_000;
   const [publicDotStatus, setPublicDotStatus] = useState<"green" | "yellow" | "red">("yellow");
+  const [publicProbeState, setPublicProbeState] = useState<Record<string, PublicProbeRecord>>({});
   const [ui, dispatch] = useReducer(playerUiReducer, undefined, loadInitialPlayerState);
   const [playing, setPlaying] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -830,11 +882,9 @@ export default function App() {
 
   const primaryHealthRef = useRef(primaryHealth);
   const publicHealthRef = useRef(publicHealth);
-  const activeSourceLabelRef = useRef(activeSourceLabel);
   useEffect(() => {
     primaryHealthRef.current = primaryHealth;
     publicHealthRef.current = publicHealth;
-    activeSourceLabelRef.current = activeSourceLabel;
   });
 
   // Refresh pasted public source inventory from the cockpit. These are separate
@@ -994,18 +1044,55 @@ export default function App() {
 
     const tick = window.setInterval(() => {
       const now = Date.now();
-      if (now - lastAutoSwitchAt.current < 4_000) return;
 
       const primary = primaryHealthRef.current();
-      const healthyConfigured = configuredSources.filter(
-        (source) =>
-          source.enabled &&
-          !source.preferred &&
-          source.state !== "disabled" &&
-          sourceTone(source) !== "red"
-      );
+      const active = autoMode === "primary" ? primary : publicHealthRef.current();
+      const failures = sourceFailuresRef.current;
+      const configuredCandidates: CandidateSource[] = configuredSources.map((source) => ({
+        id: source.id,
+        label: source.label,
+        kind: "configured",
+        index: source.index,
+        enabled: source.enabled && !source.preferred && source.state !== "disabled",
+        preferred: source.preferred,
+        tone: sourceTone(source),
+        viewerCount: getViewerCount(viewerCounts, source.id, source.viewer_count),
+        ...failures[source.id]
+      }));
+      const publicCandidates: CandidateSource[] = publicSources.map((source, index) => {
+        const id = `public-${index}`;
+        const probe = publicProbeState[id];
+        return {
+          id,
+          label: source.label || `Public ${index + 1}`,
+          kind: "public",
+          index,
+          enabled: source.enabled !== false,
+          tone: probe?.tone ?? "yellow",
+          viewerCount: getViewerCount(viewerCounts, publicSourceId(source, index), 0),
+          ...failures[id]
+        };
+      });
 
-      const switchConfigured = (source: ConfiguredSource, reason: string) => {
+      const noteFailure = (sourceId?: string) => {
+        if (!sourceId) return;
+        sourceFailuresRef.current = {
+          ...sourceFailuresRef.current,
+          [sourceId]: nextFailureRecord(sourceFailuresRef.current[sourceId], now, AUTO_SOURCE_COOLDOWN)
+        };
+      };
+
+      const patchDecisionState = (decision: FallbackDecision) => {
+        if (!decision.statePatch) return;
+        if ("primaryBadSinceMs" in decision.statePatch) primaryBadSince.current = decision.statePatch.primaryBadSinceMs ?? null;
+        if ("activeBadSinceMs" in decision.statePatch) publicBadSince.current = decision.statePatch.activeBadSinceMs ?? null;
+        if ("primaryRecoveredSinceMs" in decision.statePatch) {
+          primaryRecoveredSince.current = decision.statePatch.primaryRecoveredSinceMs ?? null;
+        }
+      };
+
+      const switchConfigured = (source: ConfiguredSource, reason: string, failedSourceId?: string) => {
+        noteFailure(failedSourceId);
         lastAutoSwitchAt.current = now;
         publicBadSince.current = null;
         primaryBadSince.current = null;
@@ -1016,10 +1103,11 @@ export default function App() {
         setAutoMode("configured");
         setCustomSrc(cockpitUrl(source.playback_url));
         setCustomSrcMsg(`${source.label} active`);
-        showPlayerNotice(`${reason}: ${source.label}`, 3000);
+        showPlayerNotice(reason, 3000);
       };
 
-      const switchPrimary = (reason: string) => {
+      const switchPrimary = (reason: string, failedSourceId?: string) => {
+        noteFailure(failedSourceId);
         lastAutoSwitchAt.current = now;
         publicBadSince.current = null;
         primaryBadSince.current = null;
@@ -1033,8 +1121,9 @@ export default function App() {
         showPlayerNotice(reason, 2600);
       };
 
-      const switchPublic = (index: number, reason: string) => {
+      const switchPublic = (index: number, reason: string, failedSourceId?: string) => {
         if (index < 0 || index >= publicSources.length) return false;
+        noteFailure(failedSourceId);
         lastAutoSwitchAt.current = now;
         publicBadSince.current = null;
         primaryBadSince.current = null;
@@ -1046,127 +1135,117 @@ export default function App() {
         return true;
       };
 
-      if (autoMode === "primary") {
-        primaryRecoveredSince.current = null;
-        if (primary.degraded) {
-          if (!primaryBadSince.current) primaryBadSince.current = now;
-          else if (now - primaryBadSince.current >= AUTO_SWITCH_DELAY) {
-            const next = healthyConfigured[0];
-            if (next) {
-              switchConfigured(next, "Primary failed, switching");
-            } else if (publicSources.length > 0) {
-              switchPublic(0, "Primary failed, switching to public fallback");
-            }
-          }
-        } else {
-          primaryBadSince.current = null;
+      const decision = decideAutoFallback(
+        {
+          mode: autoMode,
+          publicIndex: publicSourceIdx,
+          configuredId: configuredSourceId,
+          nowMs: now,
+          lastSwitchAtMs: lastAutoSwitchAt.current,
+          primaryBadSinceMs: primaryBadSince.current,
+          activeBadSinceMs: publicBadSince.current,
+          primaryRecoveredSinceMs: primaryRecoveredSince.current
+        },
+        primary,
+        active,
+        configuredCandidates,
+        publicCandidates,
+        {
+          switchDelayMs: AUTO_SWITCH_DELAY,
+          returnDelayMs: AUTO_RETURN_DELAY,
+          switchCooldownMs: AUTO_SWITCH_COOLDOWN,
+          sourceCooldownMs: AUTO_SOURCE_COOLDOWN
         }
+      );
+
+      patchDecisionState(decision);
+      if (decision.action === "stay") return;
+
+      if (decision.action === "primary") {
+        switchPrimary(decision.reason, decision.failedSourceId);
         return;
       }
 
-      if (autoMode === "public") {
-        const fallback = publicHealthRef.current();
-        if (fallback.degraded) {
-          primaryRecoveredSince.current = null;
-          if (!publicBadSince.current) publicBadSince.current = now;
-          else if (now - publicBadSince.current >= AUTO_SWITCH_DELAY) {
-            const nextConfigured = healthyConfigured[0];
-            if (nextConfigured) {
-              switchConfigured(nextConfigured, "Public fallback failed, switching");
-            } else if (publicSourceIdx + 1 < publicSources.length) {
-              switchPublic(publicSourceIdx + 1, "Public fallback failed, trying next public source");
-            } else if (primary.healthy || publicSources.length === 0) {
-              switchPrimary("Fallback failed, returning to Server 1");
-            }
-          }
-        } else {
-          publicBadSince.current = null;
-          if (primary.healthy) {
-            if (!primaryRecoveredSince.current) primaryRecoveredSince.current = now;
-            else if (now - primaryRecoveredSince.current >= AUTO_RETURN_DELAY) {
-              switchPrimary("Server 1 recovered");
-            }
-          } else {
-            primaryRecoveredSince.current = null;
-          }
-        }
+      if (decision.action === "configured") {
+        const source = configuredSources.find((item) => item.id === decision.id);
+        if (source) switchConfigured(source, decision.reason, decision.failedSourceId);
         return;
       }
 
-      if (autoMode === "configured" || autoMode === "custom") {
-        const active = publicHealthRef.current();
-        const activeSourceLabel = activeSourceLabelRef.current;
-        if (active.degraded) {
-          primaryRecoveredSince.current = null;
-          if (!publicBadSince.current) publicBadSince.current = now;
-          else if (now - publicBadSince.current >= AUTO_SWITCH_DELAY) {
-            const currentIndex = healthyConfigured.findIndex((source) => source.id === configuredSourceId);
-            const orderedCandidates =
-              currentIndex >= 0
-                ? [...healthyConfigured.slice(currentIndex + 1), ...healthyConfigured.slice(0, currentIndex)]
-                : healthyConfigured;
-            const nextConfigured = orderedCandidates.find((source) => source.id !== configuredSourceId);
-            if (nextConfigured) {
-              switchConfigured(nextConfigured, `${activeSourceLabel} failed, switching`);
-            } else if (primary.healthy) {
-              switchPrimary(`${activeSourceLabel} failed, returning to Server 1`);
-            } else if (publicSources.length > 0) {
-              switchPublic(0, `${activeSourceLabel} failed, switching to public fallback`);
-            }
-          }
-        } else {
-          publicBadSince.current = null;
-          if (primary.healthy && autoMode === "configured") {
-            if (!primaryRecoveredSince.current) primaryRecoveredSince.current = now;
-            else if (now - primaryRecoveredSince.current >= AUTO_RETURN_DELAY) {
-              switchPrimary("Server 1 recovered");
-            }
-          } else {
-            primaryRecoveredSince.current = null;
-          }
-        }
+      if (decision.action === "public") {
+        switchPublic(decision.index, decision.reason, decision.failedSourceId);
       }
     }, 1000);
 
     return () => window.clearInterval(tick);
   }, [
     AUTO_RETURN_DELAY,
+    AUTO_SOURCE_COOLDOWN,
+    AUTO_SWITCH_COOLDOWN,
     AUTO_SWITCH_DELAY,
     autoMode,
     configuredSourceId,
     configuredSources,
+    publicProbeState,
     publicSourceIdx,
     publicSources,
     showPlayerNotice,
+    viewerCounts,
   ]);
 
   // Probe public source independently so its dot stays current regardless of active mode
   useEffect(() => {
     if (publicSources.length === 0) {
       setPublicDotStatus("red");
+      setPublicProbeState({});
       return;
     }
+
+    let cancelled = false;
     const probe = async () => {
-      if (autoMode === "public") {
-        const fallback = publicHealth();
-        setPublicDotStatus(fallback.degraded ? "red" : fallback.healthy ? "green" : "yellow");
-        return;
-      }
-      const source = publicSources[publicSourceIdx % publicSources.length];
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 6000);
-      try {
-        const r = await fetch(publicPlaybackUrl(source), { method: "HEAD", signal: controller.signal });
-        setPublicDotStatus(r.ok || r.status === 405 ? "green" : "red");
-      } catch {
-        setPublicDotStatus("red");
-      } finally {
-        window.clearTimeout(timeout);
+      const updates: Record<string, PublicProbeRecord> = {};
+      await Promise.all(
+        publicSources.map(async (source, index) => {
+          const id = `public-${index}`;
+          if (autoMode === "public" && index === publicSourceIdx) {
+            const fallback = publicHealth();
+            updates[id] = {
+              tone: fallback.degraded ? "red" : fallback.healthy ? "green" : "yellow",
+              checkedAtMs: Date.now(),
+              reason: fallback.degraded ? "active playback degraded" : fallback.healthy ? "active playback healthy" : "active playback warming up"
+            };
+            return;
+          }
+
+          const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), 6500);
+          try {
+            updates[id] = await probePublicPlaybackUrl(publicPlaybackUrl(source), controller.signal);
+          } catch (error) {
+            updates[id] = {
+              tone: "red",
+              checkedAtMs: Date.now(),
+              reason: error instanceof Error ? error.message : "probe failed"
+            };
+          } finally {
+            window.clearTimeout(timeout);
+          }
+        })
+      );
+
+      if (cancelled) return;
+      setPublicProbeState((current) => ({ ...current, ...updates }));
+      const active = updates[`public-${publicSourceIdx}`];
+      if (active) {
+        setPublicDotStatus(active.tone);
       }
     };
     void probe();
     const id = window.setInterval(() => void probe(), 30_000);
-    return () => window.clearInterval(id);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [autoMode, publicHealth, publicSources, publicSourceIdx]);
 
   const watchCustomSource = useCallback(async (url: string) => {
@@ -1223,6 +1302,8 @@ export default function App() {
   }, [autoMode]);
 
   const returnToPrimaryPlayback = useCallback(() => {
+    const { ["server-1"]: _server1, ...remainingFailures } = sourceFailuresRef.current;
+    sourceFailuresRef.current = remainingFailures;
     primaryBadSince.current = null;
     publicBadSince.current = null;
     primaryRecoveredSince.current = null;
@@ -1237,6 +1318,8 @@ export default function App() {
 
   const switchToPublicSource = useCallback((index: number) => {
     if (index < 0 || index >= publicSources.length) return;
+    const { [`public-${index}`]: _publicSource, ...remainingFailures } = sourceFailuresRef.current;
+    sourceFailuresRef.current = remainingFailures;
     primaryBadSince.current = null;
     publicBadSince.current = null;
     primaryRecoveredSince.current = null;
@@ -1248,6 +1331,8 @@ export default function App() {
   }, [publicSources.length, showPlayerNotice]);
 
   const switchToConfiguredSource = useCallback((source: ConfiguredSource) => {
+    const { [source.id]: _configuredSource, ...remainingFailures } = sourceFailuresRef.current;
+    sourceFailuresRef.current = remainingFailures;
     primaryBadSince.current = null;
     publicBadSince.current = null;
     primaryRecoveredSince.current = null;
@@ -1706,16 +1791,20 @@ export default function App() {
               )}
               {publicSources.map((source, index) => {
                 const active = autoMode === "public" && publicSourceIdx === index;
+                const probe = publicProbeState[`public-${index}`];
+                const tone = active ? publicDotStatus : probe?.tone ?? "yellow";
+                const reason = probe?.reason ?? "probe pending";
                 return (
                   <button
                     className={active ? "source-button active" : "source-button"}
                     type="button"
                     key={source.id || `public-source-${index}`}
                     onClick={() => switchToPublicSource(index)}
+                    title={`${source.label || `Public ${index + 1}`}: ${reason}`}
                   >
-                    <span className={`source-dot source-dot-${publicDotStatus}`} aria-hidden="true" />
+                    <span className={`source-dot source-dot-${tone}`} aria-hidden="true" />
                     <strong>{source.label || `Public ${index + 1}`}</strong>
-                    <small>{active ? "active fallback" : "available fallback"}</small>
+                    <small>{active ? "active fallback" : reason}</small>
                   </button>
                 );
               })}

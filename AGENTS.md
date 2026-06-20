@@ -30,6 +30,8 @@ ObbyWatcher should not manage ffmpeg, write cockpit config, expose secrets, or a
 
 The source switcher is both manual and automatic. Keep official Server 1 and pasted public sources visible as separate choices with status dots and viewer counts. Public streams must use proxied playback URLs; do not point the browser directly at third-party HLS URLs. The canonical public source inventory and required headers live in `/home/joey/obbystreams/public_srcs.md`.
 
+Automatic fallback behavior is specified in `DESIGN.md` and implemented in `src/lib/sourceFallback.ts`. Keep the policy pure and unit-tested. The UI should feed it health/probe state, apply the returned decision, and preserve source cooldown memory so failed public/configured sources do not loop under load.
+
 ## Deployment
 
 Build with:

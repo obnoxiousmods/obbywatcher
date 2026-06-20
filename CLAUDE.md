@@ -14,3 +14,5 @@ Current public integration:
 
 Keep user-facing source switching in this frontend. Keep official Server 1 and pasted public streams separate in the UI. Public streams must use the proxied `playback_url` from Obbystreams, not raw third-party HLS URLs. Obbystreams owns the exact public URLs and headers documented in `/home/joey/obbystreams/public_srcs.md`.
 See `DESIGN.md` before changing public source switching or cockpit API integration.
+
+The automatic source fallback state machine is documented in `DESIGN.md` and lives in `src/lib/sourceFallback.ts`. Keep fallback choices deterministic, cooldown-aware, and covered by tests; do not add one-off React branches that can loop failed sources.

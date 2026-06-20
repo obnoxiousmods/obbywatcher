@@ -15,6 +15,8 @@ Keep public viewer features here:
 
 Do not add cockpit configuration writes, ffmpeg management, private source headers, public source request headers, or dashboard/admin controls to this repo. Those belong in Obbystreams. Keep official managed Server 1 separate from pasted public internet sources. The public source inventory is documented in `/home/joey/obbystreams/public_srcs.md`.
 
+Source fallback is critical client behavior. Follow `DESIGN.md`; change `src/lib/sourceFallback.ts` first for decision logic and add tests for every new branch. The React app should not grow ad hoc fallback branches that bypass cooldowns, source ranking, or the Server 1 recovery window.
+
 Run before finishing meaningful changes:
 
 ```sh

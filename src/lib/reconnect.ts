@@ -21,6 +21,7 @@ export type ParsedManifestProbe = {
   mediaSequence: number | null;
   targetDurationSeconds: number;
   segmentCount: number;
+  variantCount?: number;
   endSequence: number | null;
   isLive: boolean;
 };
@@ -156,6 +157,7 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
   let mediaSequence: number | null = null;
   let targetDurationSeconds = 4;
   let segmentCount = 0;
+  let variantCount = 0;
   let isLive = true;
 
   for (const rawLine of manifest.split(/\r?\n/)) {
@@ -178,17 +180,24 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
       continue;
     }
 
+    if (line.startsWith("#EXT-X-STREAM-INF:")) {
+      variantCount += 1;
+      continue;
+    }
+
     if (line === "#EXT-X-ENDLIST") {
       isLive = false;
     }
   }
 
-  const endSequence = mediaSequence === null ? null : mediaSequence + Math.max(0, segmentCount - 1);
+  const usableEntries = Math.max(segmentCount, variantCount);
+  const endSequence = mediaSequence === null ? null : mediaSequence + Math.max(0, usableEntries - 1);
 
   return {
     mediaSequence,
     targetDurationSeconds,
-    segmentCount,
+    segmentCount: usableEntries,
+    variantCount,
     endSequence,
     isLive
   };
