@@ -826,8 +826,10 @@
   .source-dots {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     margin-left: 4px;
+    max-width: 132px;
   }
 
   .source-dot {

@@ -16,6 +16,123 @@ test("loads the viewer shell", async ({ page }) => {
   await expect(page.locator(".player-source-switcher .source-button").first()).toBeVisible();
 });
 
+test("renders accurate per-source viewer counts and status dots", async ({ page }) => {
+  await page.route("https://s.obby.ca/api/public-streams", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        sources: [
+          {
+            id: "public-a",
+            label: "Public A",
+            url: "https://example.test/a.m3u8",
+            playback_url: "/api/proxy-hls?url=https%3A%2F%2Fexample.test%2Fa.m3u8",
+            enabled: true
+          },
+          {
+            id: "public-b",
+            label: "Public B",
+            url: "https://example.test/b.m3u8",
+            playback_url: "/api/proxy-hls?url=https%3A%2F%2Fexample.test%2Fb.m3u8",
+            enabled: true
+          },
+          {
+            id: "public-c",
+            label: "Public C",
+            url: "https://example.test/c.m3u8",
+            playback_url: "/api/proxy-hls?url=https%3A%2F%2Fexample.test%2Fc.m3u8",
+            enabled: true
+          }
+        ]
+      })
+    });
+  });
+  await page.route("https://s.obby.ca/api/public-source", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, sources: [] })
+    });
+  });
+  await page.route("https://s.obby.ca/api/public-configured-sources", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        sources: [
+          {
+            id: "server-1",
+            label: "Server 1 / Default",
+            type: "managed-hls",
+            index: 0,
+            enabled: true,
+            in_active_pool: true,
+            in_process: true,
+            preferred: true,
+            state: "preferred",
+            health: "green",
+            viewer_count: 99,
+            playback_url: "/hls/ufc.m3u8"
+          }
+        ],
+        viewers: {
+          total: 10,
+          ttl_seconds: 45,
+          by_source: {
+            "server-1": 4,
+            "public-a": 2,
+            "public-b": 3,
+            "public-c": 1
+          },
+          sources: [],
+          updated_at: Date.now()
+        }
+      })
+    });
+  });
+  await page.route("https://s.obby.ca/api/viewers", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        viewers: {
+          total: 10,
+          ttl_seconds: 45,
+          by_source: {
+            "server-1": 4,
+            "public-a": 2,
+            "public-b": 3,
+            "public-c": 1
+          },
+          sources: [],
+          updated_at: Date.now()
+        }
+      })
+    });
+  });
+  await page.route("https://s.obby.ca/api/live", async (route) => {
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: ""
+    });
+  });
+  await page.route("https://s.obby.ca/api/proxy-hls**", async (route) => {
+    await route.fulfill({
+      contentType: "application/vnd.apple.mpegurl",
+      body: "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:4,\nseg1.ts\n"
+    });
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByText("10 watching").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Server 1 \/ Default/ })).toContainText("4 watching");
+  await expect(page.getByRole("button", { name: /Public A/ })).toContainText("2 watching");
+  await expect(page.getByRole("button", { name: /Public B/ })).toContainText("3 watching");
+  await expect(page.getByRole("button", { name: /Public C/ })).toContainText("1 watching");
+  await expect(page.locator(".source-dots .source-dot")).toHaveCount(4);
+});
+
 test("theme picker applies pastel themes", async ({ page }) => {
   await page.goto("/");
 

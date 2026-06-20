@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import Hls from "hls.js";
 import { streamConfig } from "./config/stream";
 import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
@@ -14,6 +14,7 @@ import {
   type CandidateSource,
   type FallbackDecision
 } from "./lib/sourceFallback";
+import { totalViewerCount, viewerCountForSource } from "./lib/viewers";
 import {
   clampVolume,
   eventStartMs,
@@ -355,7 +356,7 @@ function publicPlaybackUrl(source: PublicSource) {
 }
 
 function publicSourceId(source: PublicSource, index: number) {
-  return source.id || `public-${index}`;
+  return source.id || `public-${index + 1}`;
 }
 
 function hostLabelForUrl(value: string) {
@@ -383,7 +384,7 @@ function publicCockpitSources(sources: ConfiguredSource[]) {
 }
 
 function getViewerCount(viewers: ViewerCounts | null, sourceId: string, fallback = 0) {
-  return Number(viewers?.by_source?.[sourceId] ?? fallback ?? 0);
+  return viewerCountForSource(viewers, sourceId, fallback);
 }
 
 async function probePublicPlaybackUrl(url: string, signal: AbortSignal): Promise<PublicProbeRecord> {
@@ -564,7 +565,7 @@ export default function App() {
   const primaryDot: "green" | "yellow" | "red" =
     snapshot.status === "live" ? "green" :
     snapshot.status === "failed" ? "red" : "yellow";
-  const totalViewers = Number(viewerCounts?.total ?? 0);
+  const totalViewers = totalViewerCount(viewerCounts);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1028,7 +1029,7 @@ export default function App() {
         `Switched to ${label}${publicSources.length > 1 ? ` ${((publicSourceIdx % publicSources.length) + 1).toString()}/${publicSources.length.toString()}` : ""}`,
         2600
       );
-      setOverlaySource({ kind: "public", id: source.id || `public-${publicSourceIdx + 1}`, label });
+      setOverlaySource({ kind: "public", id: publicSourceId(source, publicSourceIdx), label });
       setCustomSrc(publicPlaybackUrl(source)); // hls.js effect picks this up
     } else if (autoMode === "primary") {
       if (customSrc) showPlayerNotice("Back on primary source", 2200);
@@ -1654,6 +1655,15 @@ export default function App() {
     dispatch({ type: "set-more", open: false });
     setVolumePanelOpen((open) => !open);
   };
+  const toggleVolumePanelFromPointer = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleVolumePanel();
+  };
+  const toggleVolumePanelFromClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (event.detail !== 0) return;
+    toggleVolumePanel();
+  };
   const toggleMoreMenu = () => {
     setVolumePanelOpen(false);
     dispatch({ type: "toggle-more" });
@@ -1794,6 +1804,7 @@ export default function App() {
                 const probe = publicProbeState[`public-${index}`];
                 const tone = active ? publicDotStatus : probe?.tone ?? "yellow";
                 const reason = probe?.reason ?? "probe pending";
+                const viewers = getViewerCount(viewerCounts, publicSourceId(source, index), 0);
                 return (
                   <button
                     className={active ? "source-button active" : "source-button"}
@@ -1801,10 +1812,10 @@ export default function App() {
                     key={source.id || `public-source-${index}`}
                     onClick={() => switchToPublicSource(index)}
                     title={`${source.label || `Public ${index + 1}`}: ${reason}`}
-                  >
+                    >
                     <span className={`source-dot source-dot-${tone}`} aria-hidden="true" />
                     <strong>{source.label || `Public ${index + 1}`}</strong>
-                    <small>{active ? "active fallback" : reason}</small>
+                    <small>{viewers} watching</small>
                   </button>
                 );
               })}
@@ -1909,7 +1920,8 @@ export default function App() {
                       <button
                         className={volumePanelOpen ? "player-icon-button volume-toggle active" : "player-icon-button volume-toggle"}
                         type="button"
-                        onClick={toggleVolumePanel}
+                        onPointerDown={toggleVolumePanelFromPointer}
+                        onClick={toggleVolumePanelFromClick}
                         aria-expanded={volumePanelOpen}
                         aria-controls="volume-panel"
                         aria-label="Volume"
@@ -1968,13 +1980,21 @@ export default function App() {
                           aria-label={`Server 1 source ${snapshot.status}`}
                         />
                       )}
-                      {publicSources.length > 0 ? (
-                        <span
-                          className={`source-dot source-dot-${publicDotStatus}${autoMode === "public" ? " source-dot-active" : ""}`}
-                          title={`Auto public: ${publicDotStatus}`}
-                          aria-label={`Auto public source ${publicDotStatus}`}
-                        />
-                      ) : null}
+                      {publicSources.map((source, index) => {
+                        const active = autoMode === "public" && publicSourceIdx === index;
+                        const probe = publicProbeState[`public-${index}`];
+                        const tone = active ? publicDotStatus : probe?.tone ?? "yellow";
+                        const label = source.label || `Public ${index + 1}`;
+                        const viewers = getViewerCount(viewerCounts, publicSourceId(source, index), 0);
+                        return (
+                          <span
+                            className={`source-dot source-dot-${tone}${active ? " source-dot-active" : ""}`}
+                            title={`${label}: ${probe?.reason ?? tone} · ${viewers} watching`}
+                            aria-label={`${label} ${tone} ${viewers} watching`}
+                            key={`dot-public-${publicSourceId(source, index)}`}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
 

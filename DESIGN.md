@@ -69,6 +69,18 @@ Server 1/default supports both DASH and HLS for each configured mirror.
 - If a manually requested protocol is unsupported by the device, the source ordering falls back to the available protocol instead of leaving playback unsupported.
 - Protocol ordering and defaults are covered by `src/hooks/useLiveHls.test.ts`; the settings-menu Protocol control is covered by e2e tests.
 
+## Viewer Counts And Source Dots
+
+Viewer counts come from the cockpit viewer snapshot returned by `GET /api/public-configured-sources`, `GET /api/live`, and `POST /api/viewers`.
+
+- `total` is the top-level live viewer number when present.
+- Per-source counts prefer `by_source[sourceId]`, then `sources[]`, then source metadata fallback.
+- Public source heartbeats must use the cockpit public source id, not an internal array index, so `by_source` maps back to the correct public button.
+- The source switcher should show a viewer count on every configured and public source button.
+- The compact player-control status row should render one dot per configured source and one dot per public source. Do not collapse all public sources into one aggregate public dot.
+- Each compact dot should expose source label, health/probe status, and viewer count via its accessible label/title.
+- Count sanitization is covered by `src/lib/viewers.test.ts`; per-source rendering is covered by e2e tests.
+
 ## Tradeoffs
 
 The watcher trusts the cockpit public API for official Server 1 status and pasted public source inventory. Public stream playback must use the `playback_url` proxy so third-party CORS never blocks the browser. The source URLs and required request headers are owned by Obbystreams and documented in `/home/joey/obbystreams/public_srcs.md`.
