@@ -28,7 +28,7 @@ ObbyWatcher consumes these public Obbystreams APIs:
 
 ObbyWatcher should not manage ffmpeg, write cockpit config, expose secrets, or administer the transcoder.
 
-The source switcher is both manual and automatic. Keep official Server 1 and pasted public sources visible as separate choices with status dots and viewer counts. Public streams must use proxied playback URLs; do not point the browser directly at third-party HLS URLs.
+The source switcher is both manual and automatic. Keep official Server 1 and pasted public sources visible as separate choices with status dots and viewer counts. Public streams must use proxied playback URLs; do not point the browser directly at third-party HLS URLs. The canonical public source inventory and required headers live in `/home/joey/obbystreams/public_srcs.md`.
 
 ## Deployment
 

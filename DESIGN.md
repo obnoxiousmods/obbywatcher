@@ -16,7 +16,7 @@ Public pasted source browsing belongs here. Cockpit source management, sour-sign
 
 ## Tradeoffs
 
-The watcher trusts the cockpit public API for official Server 1 status and pasted public source inventory. Public stream playback must use the `playback_url` proxy so third-party CORS never blocks the browser.
+The watcher trusts the cockpit public API for official Server 1 status and pasted public source inventory. Public stream playback must use the `playback_url` proxy so third-party CORS never blocks the browser. The source URLs and required request headers are owned by Obbystreams and documented in `/home/joey/obbystreams/public_srcs.md`.
 
 Client-side failover should be visible and reversible. If a public source fails, the watcher can move to the next pasted public source, then Server 1 when it is healthy.
 

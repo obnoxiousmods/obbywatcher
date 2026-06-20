@@ -12,5 +12,5 @@ Current public integration:
 - Viewer heartbeats go to `https://s.obby.ca/api/viewers`.
 - Discord URL is `https://discord.gg/fJCUPDKej5` and belongs in normal navigation/utility UI, not intrusive popups.
 
-Keep user-facing source switching in this frontend. Keep official Server 1 and pasted public streams separate in the UI. Public streams must use the proxied `playback_url` from Obbystreams, not raw third-party HLS URLs.
+Keep user-facing source switching in this frontend. Keep official Server 1 and pasted public streams separate in the UI. Public streams must use the proxied `playback_url` from Obbystreams, not raw third-party HLS URLs. Obbystreams owns the exact public URLs and headers documented in `/home/joey/obbystreams/public_srcs.md`.
 See `DESIGN.md` before changing public source switching or cockpit API integration.

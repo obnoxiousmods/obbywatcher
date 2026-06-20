@@ -13,7 +13,7 @@ Keep public viewer features here:
 - Official Server 1 status from `https://s.obby.ca/api/public-configured-sources`.
 - Public stream playback through proxied `playback_url` values only.
 
-Do not add cockpit configuration writes, ffmpeg management, private source headers, or dashboard/admin controls to this repo. Those belong in Obbystreams. Keep official managed Server 1 separate from pasted public internet sources.
+Do not add cockpit configuration writes, ffmpeg management, private source headers, public source request headers, or dashboard/admin controls to this repo. Those belong in Obbystreams. Keep official managed Server 1 separate from pasted public internet sources. The public source inventory is documented in `/home/joey/obbystreams/public_srcs.md`.
 
 Run before finishing meaningful changes:
 
