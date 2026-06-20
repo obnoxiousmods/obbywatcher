@@ -8,6 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "deploy": "bash scripts/deploy.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
@@ -30,7 +31,8 @@
     "@vitejs/plugin-react": "^5.0.4",
     "hls.js": "^1.6.13",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "shaka-player": "^5.1.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

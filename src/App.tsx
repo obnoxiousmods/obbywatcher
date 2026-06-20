@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { MouseEvent } from "react";
+import Hls from "hls.js";
 import { streamConfig } from "./config/stream";
 import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
 import type { ThemeId } from "./config/themes";
@@ -40,8 +41,63 @@ type WebKitFullscreenVideo = HTMLVideoElement & {
   webkitSupportsFullscreen?: boolean;
 };
 
-type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry";
+type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry" | "cast";
 type OpenDropdown = "theme" | "mirror" | null;
+type AutoMode = "primary" | "public" | "configured" | "custom";
+type SourceTone = "green" | "yellow" | "red";
+
+type ConfiguredSource = {
+  id: string;
+  label: string;
+  type: string;
+  index: number;
+  enabled: boolean;
+  in_active_pool: boolean;
+  in_process: boolean;
+  preferred: boolean;
+  state: "preferred" | "active" | "ready" | "standby" | "disabled" | string;
+  health?: SourceTone | null;
+  health_checked_at?: number | null;
+  health_error?: string | null;
+  viewer_count: number;
+  playback_url: string;
+};
+
+type PublicSource = {
+  id: string;
+  label: string;
+  url: string;
+  playback_url?: string;
+  enabled?: boolean;
+};
+
+type ViewerSourceCount = {
+  id: string;
+  label: string;
+  viewer_count: number;
+};
+
+type ViewerCounts = {
+  total: number;
+  ttl_seconds: number;
+  by_source: Record<string, number>;
+  sources: ViewerSourceCount[];
+  updated_at: number;
+};
+
+type OverlaySource = {
+  kind: "public" | "configured" | "custom";
+  id: string;
+  label: string;
+};
+
+declare global {
+  interface Window {
+    __onGCastApiAvailable?: (available: boolean) => void;
+    cast?: any;
+    chrome?: any;
+  }
+}
 
 function PlayerIcon({ name }: { name: PlayerIconName }) {
   const commonProps = {
@@ -108,6 +164,15 @@ function PlayerIcon({ name }: { name: PlayerIconName }) {
           <path d="M16 3h3a2 2 0 0 1 2 2v3" />
           <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
           <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+      );
+    case "cast":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3" />
+          <path d="M4 17v2" />
+          <path d="M4 13a6 6 0 0 1 6 6" />
+          <path d="M4 9a10 10 0 0 1 10 10" />
         </svg>
       );
     case "retry":
@@ -212,9 +277,90 @@ function isEditableTarget(target: EventTarget | null) {
   return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
 }
 
+function castContentType(protocol: "dash" | "hls") {
+  return protocol === "dash" ? "application/dash+xml" : "application/vnd.apple.mpegurl";
+}
+
 function percent(value: number | null, max: number) {
   if (value === null || !Number.isFinite(value)) return 100;
   return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
+function bufferedAheadForVideo(video: HTMLVideoElement | null) {
+  if (!video || video.buffered.length === 0) return 0;
+  return Math.max(0, video.buffered.end(video.buffered.length - 1) - video.currentTime);
+}
+
+function liveLatencyForVideo(video: HTMLVideoElement | null) {
+  if (!video || video.seekable.length === 0) return null;
+  const liveEdge = video.seekable.end(video.seekable.length - 1);
+  return Math.max(0, liveEdge - video.currentTime);
+}
+
+function useOverlayVideoMetrics(videoRef: React.RefObject<HTMLVideoElement | null>, enabled: boolean) {
+  const [metrics, setMetrics] = useState({ bufferAheadSeconds: 0, liveLatencySeconds: null as number | null });
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const video = videoRef.current;
+    if (!video) return undefined;
+    let rafId = 0;
+    const update = () => {
+      setMetrics({
+        bufferAheadSeconds: bufferedAheadForVideo(video),
+        liveLatencySeconds: liveLatencyForVideo(video)
+      });
+      rafId = requestAnimationFrame(update);
+    };
+    video.addEventListener("timeupdate", update);
+    rafId = requestAnimationFrame(update);
+    return () => {
+      video.removeEventListener("timeupdate", update);
+      cancelAnimationFrame(rafId);
+    };
+  }, [enabled, videoRef]);
+  return metrics;
+}
+
+function cockpitUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${OBBY_COCKPIT}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function publicProxyUrl(rawUrl: string) {
+  return `${OBBY_COCKPIT}/api/proxy-hls?url=${encodeURIComponent(rawUrl)}`;
+}
+
+function publicPlaybackUrl(source: PublicSource) {
+  if (source.playback_url) return cockpitUrl(source.playback_url);
+  return publicProxyUrl(source.url);
+}
+
+function hostLabelForUrl(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "custom";
+  }
+}
+
+function sourceTone(source: Pick<ConfiguredSource, "state" | "enabled" | "health">): SourceTone {
+  if (!source.enabled || source.state === "disabled") return "red";
+  if (source.health) return source.health;
+  if (source.state === "preferred" || source.state === "active" || source.state === "ready") return "green";
+  return "yellow";
+}
+
+function configuredSourceTone(source: ConfiguredSource, primaryTone: SourceTone): SourceTone {
+  if (source.preferred) return primaryTone;
+  return sourceTone(source);
+}
+
+function publicCockpitSources(sources: ConfiguredSource[]) {
+  return sources.filter((source) => source.id === "server-1" || source.type === "managed-hls" || source.playback_url === "/hls/ufc.m3u8");
+}
+
+function getViewerCount(viewers: ViewerCounts | null, sourceId: string, fallback = 0) {
+  return Number(viewers?.by_source?.[sourceId] ?? fallback ?? 0);
 }
 
 function isWebKitFullscreen(video: WebKitFullscreenVideo | null) {
@@ -269,24 +415,58 @@ function exitWebKitFullscreen(video: WebKitFullscreenVideo | null) {
   return false;
 }
 
+const OBBY_COCKPIT = "https://s.obby.ca";
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const customVideoRef = useRef<HTMLVideoElement | null>(null);
+  const customHlsRef = useRef<Hls | null>(null);
   const playerShellRef = useRef<HTMLDivElement | null>(null);
   const now = useClock();
   const nowMs = now.getTime();
   const [notice, setNotice] = useState<string>(streamConfig.schedule);
   const [themeId, setThemeId] = useState<ThemeId>(loadInitialTheme);
+  const [customSrc, setCustomSrc] = useState<string | null>(null);
+  const [customSrcBusy, setCustomSrcBusy] = useState(false);
+  const [customSrcMsg, setCustomSrcMsg] = useState<string | null>(null);
+  const [customPlayerBusy, setCustomPlayerBusy] = useState(false);
+  const [scInput, setScInput] = useState("");
+  // Public pasted sources are hosted by the cockpit separately from the official
+  // ffmpeg source. Static config is only a local/dev fallback.
+  const [publicSources, setPublicSources] = useState<PublicSource[]>(
+    () => streamConfig.publicSources.filter((source) => source.enabled)
+  );
+  const [publicSourceIdx, setPublicSourceIdx] = useState(0);
+  const [configuredSources, setConfiguredSources] = useState<ConfiguredSource[]>([]);
+  const [configuredSourceId, setConfiguredSourceId] = useState<string | null>(null);
+  const [viewerCounts, setViewerCounts] = useState<ViewerCounts | null>(null);
+  const [overlaySource, setOverlaySource] = useState<OverlaySource | null>(null);
+  const [autoMode, setAutoMode] = useState<AutoMode>("primary");
+  const primaryBadSince = useRef<number | null>(null);
+  const publicBadSince = useRef<number | null>(null);
+  const primaryRecoveredSince = useRef<number | null>(null);
+  const lastAutoSwitchAt = useRef(0);
+  const overlayFatalSince = useRef<number | null>(null);
+  const publicProgressRef = useRef({ timeMs: 0, currentTime: 0, bufferedAhead: 0, readyState: 0 });
+  const AUTO_SWITCH_DELAY = 10_000;
+  const AUTO_RETURN_DELAY = 18_000;
+  const [publicDotStatus, setPublicDotStatus] = useState<"green" | "yellow" | "red">("yellow");
   const [ui, dispatch] = useReducer(playerUiReducer, undefined, loadInitialPlayerState);
   const [playing, setPlaying] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
+  const [castAvailable, setCastAvailable] = useState(false);
+  const [castStatus, setCastStatus] = useState<"idle" | "connecting" | "casting" | "failed">("idle");
   const [openDropdown, setOpenDropdown] = useState<OpenDropdown>(null);
   const [volumePanelOpen, setVolumePanelOpen] = useState(false);
+  const [playerNotice, setPlayerNotice] = useState<string | null>(null);
   const hideControlsTimer = useRef<number | null>(null);
   const playerClickTimer = useRef<number | null>(null);
   const lastPlayerSurfaceClick = useRef<{ time: number; x: number; y: number } | null>(null);
   const lastFullscreenToggleAt = useRef(0);
+  const customReloadNonce = useRef(0);
+  const playerNoticeTimer = useRef<number | null>(null);
 
   const playerOptions = useMemo(
     () => ({
@@ -295,20 +475,44 @@ export default function App() {
     }),
     []
   );
-  const { snapshot, activeMirror, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror } =
+  const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror } =
     useLiveHls(videoRef, streamConfig.mirrors, playerOptions);
+  const overlayActive = Boolean(customSrc);
+  const activeSourceId = overlaySource?.id ?? "server-1";
+  const activeSourceLabel = overlaySource?.label ?? "Server 1 / Default";
+  const activePlaybackUrl = customSrc ?? activeSource.url;
+  const activePlaybackProtocol = customSrc ? "hls" : activeSource.protocol;
+  const activePlaybackHost = customSrc ? hostLabelForUrl(activePlaybackUrl) : activeMirror.host;
 
-  const activeStatus = statusCopy(snapshot.status);
   const activeTheme = themeOptions.find((theme) => theme.id === themeId) ?? themeOptions[0];
-  const scheduleBuckets = useMemo(() => getScheduleBuckets(ufcSchedule, nowMs), [nowMs]);
+  const scheduleBuckets = getScheduleBuckets(ufcSchedule, nowMs);
   const featuredEvent = scheduleBuckets.current ?? scheduleBuckets.next ?? ufcSchedule[0];
   const playerBusy =
     snapshot.autoplayBlocked ||
     snapshot.status === "buffering" ||
     snapshot.status === "connecting" ||
     snapshot.status === "reconnecting";
+  const activePlayerBusy = overlayActive ? customPlayerBusy : playerBusy;
+  const customVideoMetrics = useOverlayVideoMetrics(customVideoRef, overlayActive);
+  const customLiveLatencySeconds = overlayActive ? customVideoMetrics.liveLatencySeconds : null;
+  const customBufferAheadSeconds = overlayActive ? customVideoMetrics.bufferAheadSeconds : 0;
+  const activePlaybackStatus: LivePlaybackStatus = overlayActive
+    ? customPlayerBusy ? (playing ? "buffering" : "connecting") : playing ? "live" : "idle"
+    : snapshot.status;
+  const activeStatus = overlayActive
+    ? activePlaybackStatus === "live" ? `${activeSourceLabel} live` :
+      activePlaybackStatus === "buffering" ? `${activeSourceLabel} buffering` :
+      activePlaybackStatus === "connecting" ? `${activeSourceLabel} connecting` :
+      `${activeSourceLabel} ready`
+    : statusCopy(snapshot.status);
+  const activeLiveLatencySeconds = overlayActive ? customLiveLatencySeconds : snapshot.liveLatencySeconds;
+  const activeBufferAheadSeconds = overlayActive ? customBufferAheadSeconds : snapshot.bufferAheadSeconds;
   const latencyMax = Math.max(12, snapshot.targetDurationSeconds * 5);
-  const liveProgressPercent = Math.max(8, 100 - percent(snapshot.liveLatencySeconds, latencyMax));
+  const liveProgressPercent = Math.max(8, 100 - percent(activeLiveLatencySeconds, latencyMax));
+  const primaryDot: "green" | "yellow" | "red" =
+    snapshot.status === "live" ? "green" :
+    snapshot.status === "failed" ? "red" : "yellow";
+  const totalViewers = Number(viewerCounts?.total ?? 0);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -346,68 +550,114 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.volume = ui.volume;
-    video.muted = ui.muted;
+    for (const video of [videoRef.current, customVideoRef.current]) {
+      if (!video) continue;
+      video.volume = ui.volume;
+      video.muted = ui.muted;
+    }
   }, [ui.volume, ui.muted]);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return undefined;
+    window.__onGCastApiAvailable = (available: boolean) => {
+      setCastAvailable(available);
+      if (!available || !window.chrome?.cast || !window.cast?.framework) return;
+      const sessionRequest = new window.chrome.cast.SessionRequest(window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID);
+      const apiConfig = new window.chrome.cast.ApiConfig(sessionRequest, () => undefined, (availability: string) => {
+        setCastAvailable(availability === window.chrome.cast.ReceiverAvailability.AVAILABLE);
+      });
+      window.chrome.cast.initialize(apiConfig, () => undefined, () => setCastAvailable(false));
+    };
 
-    const syncPlayback = () => setPlaying(!video.paused && !video.ended);
+    let script: HTMLScriptElement | null = null;
+    if (!document.querySelector('script[src*="cast_sender.js"]')) {
+      script = document.createElement("script");
+      script.src = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      window.__onGCastApiAvailable = undefined;
+      if (script && script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const videos = [videoRef.current, customVideoRef.current].filter((video): video is HTMLVideoElement => Boolean(video));
+    if (videos.length === 0) return undefined;
+
+    const syncPlayback = (event?: Event) => {
+      const video = (event?.currentTarget as HTMLVideoElement | null) ?? (overlayActive ? customVideoRef.current : videoRef.current);
+      if (!video || video !== (overlayActive ? customVideoRef.current : videoRef.current)) return;
+      setPlaying(!video.paused && !video.ended);
+    };
     const syncVolume = () => {
+      const video = overlayActive ? customVideoRef.current : videoRef.current;
+      if (!video) return;
       dispatch({ type: "set-volume", volume: video.volume });
       dispatch({ type: "set-muted", muted: video.muted });
     };
     const onEnterPictureInPicture = () => setPictureInPicture(true);
     const onLeavePictureInPicture = () => setPictureInPicture(false);
 
-    video.addEventListener("play", syncPlayback);
-    video.addEventListener("playing", syncPlayback);
-    video.addEventListener("pause", syncPlayback);
-    video.addEventListener("ended", syncPlayback);
-    video.addEventListener("volumechange", syncVolume);
-    video.addEventListener("enterpictureinpicture", onEnterPictureInPicture);
-    video.addEventListener("leavepictureinpicture", onLeavePictureInPicture);
+    for (const video of videos) {
+      video.addEventListener("play", syncPlayback);
+      video.addEventListener("playing", syncPlayback);
+      video.addEventListener("pause", syncPlayback);
+      video.addEventListener("ended", syncPlayback);
+      video.addEventListener("volumechange", syncVolume);
+      video.addEventListener("enterpictureinpicture", onEnterPictureInPicture);
+      video.addEventListener("leavepictureinpicture", onLeavePictureInPicture);
+    }
+
+    syncPlayback();
+    syncVolume();
 
     return () => {
-      video.removeEventListener("play", syncPlayback);
-      video.removeEventListener("playing", syncPlayback);
-      video.removeEventListener("pause", syncPlayback);
-      video.removeEventListener("ended", syncPlayback);
-      video.removeEventListener("volumechange", syncVolume);
-      video.removeEventListener("enterpictureinpicture", onEnterPictureInPicture);
-      video.removeEventListener("leavepictureinpicture", onLeavePictureInPicture);
+      for (const video of videos) {
+        video.removeEventListener("play", syncPlayback);
+        video.removeEventListener("playing", syncPlayback);
+        video.removeEventListener("pause", syncPlayback);
+        video.removeEventListener("ended", syncPlayback);
+        video.removeEventListener("volumechange", syncVolume);
+        video.removeEventListener("enterpictureinpicture", onEnterPictureInPicture);
+        video.removeEventListener("leavepictureinpicture", onLeavePictureInPicture);
+      }
     };
-  }, []);
+  }, [overlayActive]);
 
   useEffect(() => {
-    const video = videoRef.current as WebKitFullscreenVideo | null;
+    const videos = [videoRef.current, customVideoRef.current].filter((video): video is WebKitFullscreenVideo => Boolean(video));
     const syncFullscreen = () => {
-      setFullscreen(document.fullscreenElement === playerShellRef.current || isWebKitFullscreen(video));
+      const active = (overlayActive ? customVideoRef.current : videoRef.current) as WebKitFullscreenVideo | null;
+      setFullscreen(document.fullscreenElement === playerShellRef.current || isWebKitFullscreen(active));
     };
 
     document.addEventListener("fullscreenchange", syncFullscreen);
-    video?.addEventListener("webkitbeginfullscreen", syncFullscreen);
-    video?.addEventListener("webkitendfullscreen", syncFullscreen);
-    video?.addEventListener("webkitpresentationmodechanged", syncFullscreen);
+    for (const video of videos) {
+      video.addEventListener("webkitbeginfullscreen", syncFullscreen);
+      video.addEventListener("webkitendfullscreen", syncFullscreen);
+      video.addEventListener("webkitpresentationmodechanged", syncFullscreen);
+    }
 
     return () => {
       document.removeEventListener("fullscreenchange", syncFullscreen);
-      video?.removeEventListener("webkitbeginfullscreen", syncFullscreen);
-      video?.removeEventListener("webkitendfullscreen", syncFullscreen);
-      video?.removeEventListener("webkitpresentationmodechanged", syncFullscreen);
+      for (const video of videos) {
+        video.removeEventListener("webkitbeginfullscreen", syncFullscreen);
+        video.removeEventListener("webkitendfullscreen", syncFullscreen);
+        video.removeEventListener("webkitpresentationmodechanged", syncFullscreen);
+      }
     };
-  }, []);
+  }, [overlayActive]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
     if (hideControlsTimer.current !== null) window.clearTimeout(hideControlsTimer.current);
-    if (!playing || playerBusy || ui.moreMenuOpen || volumePanelOpen) return;
+    if (!playing || activePlayerBusy || ui.moreMenuOpen || volumePanelOpen) return;
     hideControlsTimer.current = window.setTimeout(() => setControlsVisible(false), 1100);
-  }, [playerBusy, playing, ui.moreMenuOpen, volumePanelOpen]);
+  }, [activePlayerBusy, playing, ui.moreMenuOpen, volumePanelOpen]);
 
   useEffect(() => {
     revealControls();
@@ -419,8 +669,636 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (playerClickTimer.current !== null) window.clearTimeout(playerClickTimer.current);
+      if (playerNoticeTimer.current !== null) window.clearTimeout(playerNoticeTimer.current);
     };
   }, []);
+
+  const showPlayerNotice = useCallback((message: string, durationMs = 2400) => {
+    setPlayerNotice(message);
+    if (playerNoticeTimer.current !== null) window.clearTimeout(playerNoticeTimer.current);
+    playerNoticeTimer.current = window.setTimeout(() => {
+      setPlayerNotice(null);
+      playerNoticeTimer.current = null;
+    }, durationMs);
+  }, []);
+
+  // Attach hls.js to the overlay video when customSrc is set
+  useEffect(() => {
+    const video = customVideoRef.current;
+    publicProgressRef.current = { timeMs: Date.now(), currentTime: 0, bufferedAhead: 0, readyState: 0 };
+    overlayFatalSince.current = null;
+
+    // Destroy previous instance
+    if (customHlsRef.current) {
+      customHlsRef.current.destroy();
+      customHlsRef.current = null;
+    }
+
+    if (!customSrc || !video) {
+      setCustomPlayerBusy(false);
+      return;
+    }
+
+    video.autoplay = true;
+    video.controls = false;
+    video.playsInline = true;
+    video.volume = ui.volume;
+    video.muted = ui.muted;
+    setCustomPlayerBusy(true);
+
+    const markBusy = () => setCustomPlayerBusy(true);
+    const markReady = () => {
+      overlayFatalSince.current = null;
+      setCustomPlayerBusy(false);
+    };
+    const markFatal = () => {
+      overlayFatalSince.current = Date.now();
+      publicProgressRef.current.timeMs = Date.now() - 8_000;
+      setCustomPlayerBusy(true);
+    };
+    video.addEventListener("waiting", markBusy);
+    video.addEventListener("stalled", markBusy);
+    video.addEventListener("seeking", markBusy);
+    video.addEventListener("error", markFatal);
+    video.addEventListener("emptied", markFatal);
+    video.addEventListener("canplay", markReady);
+    video.addEventListener("playing", markReady);
+    video.addEventListener("seeked", markReady);
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 30,
+      });
+      customHlsRef.current = hls;
+      hls.loadSource(customSrc);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setCustomPlayerBusy(false);
+        void video.play().catch(() => undefined);
+      });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (data.fatal) {
+          markFatal();
+          hls.destroy();
+          customHlsRef.current = null;
+        }
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari native HLS
+      video.src = customSrc;
+      video.load();
+      void video.play().catch(() => undefined);
+    }
+
+    return () => {
+      video.removeEventListener("waiting", markBusy);
+      video.removeEventListener("stalled", markBusy);
+      video.removeEventListener("seeking", markBusy);
+      video.removeEventListener("error", markFatal);
+      video.removeEventListener("emptied", markFatal);
+      video.removeEventListener("canplay", markReady);
+      video.removeEventListener("playing", markReady);
+      video.removeEventListener("seeked", markReady);
+      if (customHlsRef.current) {
+        customHlsRef.current.destroy();
+        customHlsRef.current = null;
+      }
+      // Detach the media element so decoding stops cleanly when the overlay closes.
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [customSrc]);
+
+  // Mute/pause hook video when custom source overlay is active
+  useEffect(() => {
+    const hookVideo = videoRef.current;
+    if (!hookVideo) return;
+    if (customSrc) {
+      hookVideo.muted = true;
+      hookVideo.pause();
+    } else {
+      hookVideo.muted = ui.muted;
+      void hookVideo.play().catch(() => undefined);
+    }
+  }, [customSrc, ui.muted]);
+
+  const primaryHealth = useCallback(() => {
+    const degradedStates: LivePlaybackStatus[] = ["buffering", "reconnecting", "failed", "offline"];
+    const degraded = degradedStates.includes(snapshot.status) || (snapshot.bufferAheadSeconds < 0.35 && snapshot.status !== "live");
+    return {
+      degraded,
+      healthy:
+        snapshot.status === "live" &&
+        snapshot.bufferAheadSeconds >= 0.75 &&
+        snapshot.liveLatencySeconds !== null &&
+        snapshot.liveLatencySeconds <= Math.max(14, snapshot.targetDurationSeconds * 3),
+    };
+  }, [snapshot.bufferAheadSeconds, snapshot.liveLatencySeconds, snapshot.status, snapshot.targetDurationSeconds]);
+
+  const publicHealth = useCallback(() => {
+    const video = customVideoRef.current;
+    if (!video || !customSrc) {
+      return { degraded: true, healthy: false, ready: false };
+    }
+
+    const nowTimeMs = Date.now();
+    const bufferedAhead =
+      video.buffered.length > 0 ? Math.max(0, video.buffered.end(video.buffered.length - 1) - video.currentTime) : 0;
+    const previous = publicProgressRef.current;
+    const currentTimeAdvanced = video.currentTime > previous.currentTime + 0.2;
+    const readyStateImproved = video.readyState > previous.readyState;
+
+    if (currentTimeAdvanced || bufferedAhead > previous.bufferedAhead + 0.4 || readyStateImproved) {
+      publicProgressRef.current = {
+        timeMs: nowTimeMs,
+        currentTime: video.currentTime,
+        bufferedAhead,
+        readyState: video.readyState,
+      };
+    }
+
+    const stalledForMs = nowTimeMs - publicProgressRef.current.timeMs;
+    const ready = video.readyState >= 2 || bufferedAhead > 0.25;
+    const fatalForMs = overlayFatalSince.current ? nowTimeMs - overlayFatalSince.current : 0;
+    const degraded = Boolean(video.error) || fatalForMs > 2500 || (ready && stalledForMs > 7000 && bufferedAhead < 0.4);
+    const healthy = !degraded && (video.readyState >= 3 || bufferedAhead >= 1.25);
+    return { degraded, healthy, ready };
+  }, [customSrc]);
+
+  const primaryHealthRef = useRef(primaryHealth);
+  const publicHealthRef = useRef(publicHealth);
+  const activeSourceLabelRef = useRef(activeSourceLabel);
+  useEffect(() => {
+    primaryHealthRef.current = primaryHealth;
+    publicHealthRef.current = publicHealth;
+    activeSourceLabelRef.current = activeSourceLabel;
+  });
+
+  // Refresh pasted public source inventory from the cockpit. These are separate
+  // from the official managed Server 1 source and always use proxied playback.
+  useEffect(() => {
+    async function fetchPublicSources() {
+      let merged: PublicSource[] = [];
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/public-streams`);
+        const data = await resp.json() as { ok: boolean; sources?: PublicSource[] };
+        if (data.ok && Array.isArray(data.sources)) {
+          merged = data.sources.filter((source) => source.url && source.enabled !== false);
+        }
+      } catch {
+        // Static file fallback below keeps the public switcher usable in local/dev.
+      }
+      try {
+        const inventory = await fetch("/public-sources.json", { cache: "no-store" });
+        if (inventory.ok) {
+          const data = await inventory.json() as { sources?: PublicSource[] };
+          for (const source of data.sources || []) {
+            if (source?.url && source.enabled !== false && !merged.some((item) => item.url === source.url)) {
+              merged.push(source);
+            }
+          }
+        }
+      } catch {
+        // Static config below remains a final local fallback.
+      }
+      for (const source of streamConfig.publicSources.filter((source) => source.enabled)) {
+        if (!merged.some((item) => item.url === source.url)) merged.push(source);
+      }
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/public-source`);
+        const data = await resp.json() as { ok: boolean; sources: string[] };
+        if (data.ok && data.sources?.length) {
+          data.sources.forEach((raw, index) => {
+            const url = raw.startsWith("/") ? `${OBBY_COCKPIT}${raw}` : raw;
+            if (!merged.some((source) => source.url === url)) {
+              merged.push({ id: `auto-public-${index + 1}`, label: `Auto public ${index + 1}`, url });
+            }
+          });
+        }
+      } catch {
+        // Silently ignore: pasted public source inventory stays authoritative.
+      }
+      setPublicSources(merged);
+    }
+    void fetchPublicSources();
+    const t = window.setInterval(fetchPublicSources, 3 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchConfiguredSources() {
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/public-configured-sources`);
+        const data = await resp.json() as { ok: boolean; sources: ConfiguredSource[]; viewers?: ViewerCounts };
+        if (!cancelled && data.ok) {
+          setConfiguredSources(Array.isArray(data.sources) ? publicCockpitSources(data.sources) : []);
+          if (data.viewers) setViewerCounts(data.viewers);
+        }
+      } catch {
+        // The primary stream remains usable if the cockpit metadata API is unavailable.
+      }
+    }
+
+    void fetchConfiguredSources();
+    const interval = window.setInterval(fetchConfiguredSources, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return undefined;
+    const events = new EventSource(`${OBBY_COCKPIT}/api/live`);
+    events.addEventListener("status", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data) as { ok: boolean; sources?: ConfiguredSource[]; viewers?: ViewerCounts };
+        if (!data.ok) return;
+        if (Array.isArray(data.sources)) setConfiguredSources(publicCockpitSources(data.sources));
+        if (data.viewers) setViewerCounts(data.viewers);
+      } catch {
+        // Ignore malformed live event payloads and wait for the next update.
+      }
+    });
+    events.onerror = () => {
+      // EventSource automatically reconnects; polling above remains the fallback.
+    };
+    return () => events.close();
+  }, []);
+
+  useEffect(() => {
+    const sessionKey = "obbywatcher:viewer-session";
+    let sessionId = window.localStorage.getItem(sessionKey);
+    if (!sessionId) {
+      sessionId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      window.localStorage.setItem(sessionKey, sessionId);
+    }
+
+    let cancelled = false;
+    async function heartbeat() {
+      if (cancelled || !sessionId) return;
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/viewers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            source_id: activeSourceId,
+            source_label: activeSourceLabel,
+            page: window.location.href,
+            playback: customSrc ? "overlay-hls" : activeSource.protocol
+          })
+        });
+        const data = await resp.json() as { ok: boolean; viewers?: ViewerCounts };
+        if (data.ok && data.viewers) setViewerCounts(data.viewers);
+      } catch {
+        // Viewer counts are advisory; playback should never depend on this heartbeat.
+      }
+    }
+
+    void heartbeat();
+    const interval = window.setInterval(heartbeat, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeSource.protocol, activeSourceId, activeSourceLabel, customSrc]);
+
+  // Load public source into overlay when autoMode switches to "public"
+  useEffect(() => {
+    if (autoMode === "public" && publicSources.length > 0) {
+      const source = publicSources[publicSourceIdx % publicSources.length];
+      const label = source.label || `Public ${publicSourceIdx + 1}`;
+      showPlayerNotice(
+        `Switched to ${label}${publicSources.length > 1 ? ` ${((publicSourceIdx % publicSources.length) + 1).toString()}/${publicSources.length.toString()}` : ""}`,
+        2600
+      );
+      setOverlaySource({ kind: "public", id: source.id || `public-${publicSourceIdx + 1}`, label });
+      setCustomSrc(publicPlaybackUrl(source)); // hls.js effect picks this up
+    } else if (autoMode === "primary") {
+      if (customSrc) showPlayerNotice("Back on primary source", 2200);
+      setConfiguredSourceId(null);
+      setOverlaySource(null);
+      setCustomSrc(null);
+    }
+  }, [autoMode, customSrc, publicSourceIdx, publicSources, showPlayerNotice]);
+
+  // Quality watchdog: detect bad active playback and rotate to the next healthy source.
+  useEffect(() => {
+    if (configuredSources.length === 0 && publicSources.length === 0) return;
+
+    const tick = window.setInterval(() => {
+      const now = Date.now();
+      if (now - lastAutoSwitchAt.current < 4_000) return;
+
+      const primary = primaryHealthRef.current();
+      const healthyConfigured = configuredSources.filter(
+        (source) =>
+          source.enabled &&
+          !source.preferred &&
+          source.state !== "disabled" &&
+          sourceTone(source) !== "red"
+      );
+
+      const switchConfigured = (source: ConfiguredSource, reason: string) => {
+        lastAutoSwitchAt.current = now;
+        publicBadSince.current = null;
+        primaryBadSince.current = null;
+        primaryRecoveredSince.current = null;
+        setPublicSourceIdx(0);
+        setConfiguredSourceId(source.id);
+        setOverlaySource({ kind: "configured", id: source.id, label: source.label });
+        setAutoMode("configured");
+        setCustomSrc(cockpitUrl(source.playback_url));
+        setCustomSrcMsg(`${source.label} active`);
+        showPlayerNotice(`${reason}: ${source.label}`, 3000);
+      };
+
+      const switchPrimary = (reason: string) => {
+        lastAutoSwitchAt.current = now;
+        publicBadSince.current = null;
+        primaryBadSince.current = null;
+        primaryRecoveredSince.current = null;
+        setPublicSourceIdx(0);
+        setConfiguredSourceId(null);
+        setOverlaySource(null);
+        setAutoMode("primary");
+        setCustomSrc(null);
+        setCustomSrcMsg(null);
+        showPlayerNotice(reason, 2600);
+      };
+
+      const switchPublic = (index: number, reason: string) => {
+        if (index < 0 || index >= publicSources.length) return false;
+        lastAutoSwitchAt.current = now;
+        publicBadSince.current = null;
+        primaryBadSince.current = null;
+        primaryRecoveredSince.current = null;
+        setConfiguredSourceId(null);
+        setPublicSourceIdx(index);
+        setAutoMode("public");
+        showPlayerNotice(reason, 2600);
+        return true;
+      };
+
+      if (autoMode === "primary") {
+        primaryRecoveredSince.current = null;
+        if (primary.degraded) {
+          if (!primaryBadSince.current) primaryBadSince.current = now;
+          else if (now - primaryBadSince.current >= AUTO_SWITCH_DELAY) {
+            const next = healthyConfigured[0];
+            if (next) {
+              switchConfigured(next, "Primary failed, switching");
+            } else if (publicSources.length > 0) {
+              switchPublic(0, "Primary failed, switching to public fallback");
+            }
+          }
+        } else {
+          primaryBadSince.current = null;
+        }
+        return;
+      }
+
+      if (autoMode === "public") {
+        const fallback = publicHealthRef.current();
+        if (fallback.degraded) {
+          primaryRecoveredSince.current = null;
+          if (!publicBadSince.current) publicBadSince.current = now;
+          else if (now - publicBadSince.current >= AUTO_SWITCH_DELAY) {
+            const nextConfigured = healthyConfigured[0];
+            if (nextConfigured) {
+              switchConfigured(nextConfigured, "Public fallback failed, switching");
+            } else if (publicSourceIdx + 1 < publicSources.length) {
+              switchPublic(publicSourceIdx + 1, "Public fallback failed, trying next public source");
+            } else if (primary.healthy || publicSources.length === 0) {
+              switchPrimary("Fallback failed, returning to Server 1");
+            }
+          }
+        } else {
+          publicBadSince.current = null;
+          if (primary.healthy) {
+            if (!primaryRecoveredSince.current) primaryRecoveredSince.current = now;
+            else if (now - primaryRecoveredSince.current >= AUTO_RETURN_DELAY) {
+              switchPrimary("Server 1 recovered");
+            }
+          } else {
+            primaryRecoveredSince.current = null;
+          }
+        }
+        return;
+      }
+
+      if (autoMode === "configured" || autoMode === "custom") {
+        const active = publicHealthRef.current();
+        const activeSourceLabel = activeSourceLabelRef.current;
+        if (active.degraded) {
+          primaryRecoveredSince.current = null;
+          if (!publicBadSince.current) publicBadSince.current = now;
+          else if (now - publicBadSince.current >= AUTO_SWITCH_DELAY) {
+            const currentIndex = healthyConfigured.findIndex((source) => source.id === configuredSourceId);
+            const orderedCandidates =
+              currentIndex >= 0
+                ? [...healthyConfigured.slice(currentIndex + 1), ...healthyConfigured.slice(0, currentIndex)]
+                : healthyConfigured;
+            const nextConfigured = orderedCandidates.find((source) => source.id !== configuredSourceId);
+            if (nextConfigured) {
+              switchConfigured(nextConfigured, `${activeSourceLabel} failed, switching`);
+            } else if (primary.healthy) {
+              switchPrimary(`${activeSourceLabel} failed, returning to Server 1`);
+            } else if (publicSources.length > 0) {
+              switchPublic(0, `${activeSourceLabel} failed, switching to public fallback`);
+            }
+          }
+        } else {
+          publicBadSince.current = null;
+          if (primary.healthy && autoMode === "configured") {
+            if (!primaryRecoveredSince.current) primaryRecoveredSince.current = now;
+            else if (now - primaryRecoveredSince.current >= AUTO_RETURN_DELAY) {
+              switchPrimary("Server 1 recovered");
+            }
+          } else {
+            primaryRecoveredSince.current = null;
+          }
+        }
+      }
+    }, 1000);
+
+    return () => window.clearInterval(tick);
+  }, [
+    AUTO_RETURN_DELAY,
+    AUTO_SWITCH_DELAY,
+    autoMode,
+    configuredSourceId,
+    configuredSources,
+    publicSourceIdx,
+    publicSources,
+    showPlayerNotice,
+  ]);
+
+  // Probe public source independently so its dot stays current regardless of active mode
+  useEffect(() => {
+    if (publicSources.length === 0) {
+      setPublicDotStatus("red");
+      return;
+    }
+    const probe = async () => {
+      if (autoMode === "public") {
+        const fallback = publicHealth();
+        setPublicDotStatus(fallback.degraded ? "red" : fallback.healthy ? "green" : "yellow");
+        return;
+      }
+      const source = publicSources[publicSourceIdx % publicSources.length];
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 6000);
+      try {
+        const r = await fetch(publicPlaybackUrl(source), { method: "HEAD", signal: controller.signal });
+        setPublicDotStatus(r.ok || r.status === 405 ? "green" : "red");
+      } catch {
+        setPublicDotStatus("red");
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+    void probe();
+    const id = window.setInterval(() => void probe(), 30_000);
+    return () => window.clearInterval(id);
+  }, [autoMode, publicHealth, publicSources, publicSourceIdx]);
+
+  const watchCustomSource = useCallback(async (url: string) => {
+    setCustomSrcBusy(true);
+    setCustomSrcMsg(null);
+      try {
+        primaryBadSince.current = null;
+        publicBadSince.current = null;
+        primaryRecoveredSince.current = null;
+      setAutoMode("custom");
+      setConfiguredSourceId(null);
+      setOverlaySource({ kind: "custom", id: "custom", label: "Custom source" });
+      const isDirectStream = url.split("?")[0].endsWith(".m3u8") || url.includes("load-playlist");
+      let streamUrl = url;
+      if (!isDirectStream) {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/scrape`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await resp.json() as { ok: boolean; links: string[]; count: number };
+        if (!data.ok || !data.links?.length) {
+          setCustomSrcMsg("No streams found — try a direct stream URL");
+          return;
+        }
+        streamUrl = data.links[0];
+      }
+      const proxied = `${OBBY_COCKPIT}/api/proxy-hls?url=${encodeURIComponent(streamUrl)}`;
+      setCustomSrc(proxied); // hls.js effect handles loading
+      setCustomSrcMsg("Custom source active");
+      showPlayerNotice("Custom source loaded", 2200);
+    } catch {
+      setCustomSrcMsg("Failed to load source — check the URL");
+      showPlayerNotice("Failed to load source", 2800);
+    } finally {
+      setCustomSrcBusy(false);
+    }
+  }, [showPlayerNotice]);
+
+  const clearCustomSource = useCallback(() => {
+    if (autoMode !== "primary") {
+      primaryBadSince.current = null;
+      publicBadSince.current = null;
+      primaryRecoveredSince.current = null;
+      setPublicSourceIdx(0);
+      setAutoMode("primary");
+    }
+    setConfiguredSourceId(null);
+    setOverlaySource(null);
+    setCustomSrc(null);
+    setCustomSrcMsg(null);
+    setScInput("");
+    // hls.js cleanup is handled in the customSrc effect
+  }, [autoMode]);
+
+  const returnToPrimaryPlayback = useCallback(() => {
+    primaryBadSince.current = null;
+    publicBadSince.current = null;
+    primaryRecoveredSince.current = null;
+    setPublicSourceIdx(0);
+    setAutoMode("primary");
+    setConfiguredSourceId(null);
+    setOverlaySource(null);
+    setCustomSrc(null);
+    setCustomSrcMsg(null);
+    showPlayerNotice("Back on primary source", 2200);
+  }, [showPlayerNotice]);
+
+  const switchToPublicSource = useCallback((index: number) => {
+    if (index < 0 || index >= publicSources.length) return;
+    primaryBadSince.current = null;
+    publicBadSince.current = null;
+    primaryRecoveredSince.current = null;
+    setCustomSrcMsg(null);
+    setPublicSourceIdx(index);
+    setAutoMode("public");
+    setConfiguredSourceId(null);
+    showPlayerNotice(`Switched to public ${index + 1}`, 2200);
+  }, [publicSources.length, showPlayerNotice]);
+
+  const switchToConfiguredSource = useCallback((source: ConfiguredSource) => {
+    primaryBadSince.current = null;
+    publicBadSince.current = null;
+    primaryRecoveredSince.current = null;
+    setPublicSourceIdx(0);
+    setCustomSrcMsg(null);
+
+    if (source.preferred || source.playback_url === "/hls/ufc.m3u8") {
+      setConfiguredSourceId(null);
+      setOverlaySource(null);
+      setAutoMode("primary");
+      setCustomSrc(null);
+      showPlayerNotice("Back on Server 1 / Default", 2200);
+      return;
+    }
+
+    setConfiguredSourceId(source.id);
+    setOverlaySource({ kind: "configured", id: source.id, label: source.label });
+    setAutoMode("configured");
+    setCustomSrc(cockpitUrl(source.playback_url));
+    setCustomSrcMsg(`${source.label} active`);
+    showPlayerNotice(`Switched to ${source.label}`, 2400);
+  }, [showPlayerNotice]);
+
+  const seekActiveToLive = useCallback(() => {
+    const video = customSrc ? customVideoRef.current : videoRef.current;
+    if (!video) return;
+    if (customSrc) {
+      if (video.seekable.length > 0) {
+        const liveEdge = video.seekable.end(video.seekable.length - 1);
+        video.currentTime = Math.max(0, liveEdge - 0.35);
+      }
+      void video.play().catch(() => undefined);
+      return;
+    }
+    seekToLive();
+  }, [customSrc, seekToLive]);
+
+  const reloadActivePlayback = useCallback(() => {
+    if (!customSrc) {
+      retryNow();
+      return;
+    }
+    customReloadNonce.current += 1;
+    const stamp = customReloadNonce.current;
+    setCustomSrc((current) => {
+      if (!current) return current;
+      const [base] = current.split("#", 1);
+      const joiner = base.includes("?") ? "&" : "?";
+      return `${base}${joiner}owr=${Date.now()}-${stamp}`;
+    });
+  }, [customSrc, retryNow]);
 
   const copyText = useCallback((label: string, value: string) => {
     if (!navigator.clipboard?.writeText) {
@@ -440,35 +1318,42 @@ export default function App() {
   }, []);
 
   const togglePlayback = useCallback(async () => {
-    const video = videoRef.current;
+    const video = customSrc ? customVideoRef.current : videoRef.current;
     if (!video) return;
 
     if (video.paused || video.ended) {
       try {
         await video.play();
       } catch {
-        await enableAudio();
+        if (customSrc) {
+          video.muted = false;
+          if (video.volume === 0) video.volume = ui.volume || 1;
+          await video.play().catch(() => undefined);
+        } else {
+          await enableAudio();
+        }
       }
       return;
     }
 
     video.pause();
-  }, [enableAudio]);
+  }, [customSrc, enableAudio, ui.volume]);
 
   const setVolume = useCallback((volume: number) => {
-    dispatch({ type: "set-volume", volume });
-    const video = videoRef.current;
-    if (video) {
-      video.volume = clampVolume(volume);
-      video.muted = volume <= 0;
+    const nextVolume = clampVolume(volume);
+    dispatch({ type: "set-volume", volume: nextVolume });
+    for (const video of [videoRef.current, customVideoRef.current]) {
+      if (!video) continue;
+      video.volume = nextVolume;
+      video.muted = nextVolume <= 0;
     }
   }, []);
 
   const toggleMute = useCallback(() => {
     const nextMuted = !ui.muted;
     dispatch({ type: "set-muted", muted: nextMuted });
-    const video = videoRef.current;
-    if (video) {
+    for (const video of [videoRef.current, customVideoRef.current]) {
+      if (!video) continue;
       video.muted = nextMuted;
       if (!nextMuted && video.volume === 0) {
         video.volume = ui.volume || 1;
@@ -478,7 +1363,7 @@ export default function App() {
 
   const toggleFullscreen = useCallback(async () => {
     const shell = playerShellRef.current;
-    const video = videoRef.current as WebKitFullscreenVideo | null;
+    const video = (customSrc ? customVideoRef.current : videoRef.current) as WebKitFullscreenVideo | null;
     if (!shell) return;
 
     if (document.fullscreenElement) {
@@ -501,7 +1386,7 @@ export default function App() {
     }
 
     if (enterWebKitFullscreen(video)) setFullscreen(true);
-  }, []);
+  }, [customSrc]);
 
   const clearPlayerClickTimer = useCallback(() => {
     if (playerClickTimer.current === null) return;
@@ -561,7 +1446,7 @@ export default function App() {
 
   const togglePictureInPicture = useCallback(async () => {
     const pipDocument = document as PictureInPictureDocument;
-    const video = videoRef.current as PictureInPictureVideo | null;
+    const video = (customSrc ? customVideoRef.current : videoRef.current) as PictureInPictureVideo | null;
     if (!video || !pipDocument.pictureInPictureEnabled || !video.requestPictureInPicture) return;
 
     if (pipDocument.pictureInPictureElement && pipDocument.exitPictureInPicture) {
@@ -570,7 +1455,46 @@ export default function App() {
     }
 
     await video.requestPictureInPicture();
-  }, []);
+  }, [customSrc]);
+
+  const startCasting = useCallback(async () => {
+    if (!window.cast?.framework || !window.chrome?.cast) return;
+    setCastStatus("connecting");
+    try {
+      const context = window.cast.framework.CastContext.getInstance();
+      context.setOptions({
+        receiverApplicationId: window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: window.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      });
+      const session = context.getCurrentSession() ?? (await context.requestSession());
+      const mediaInfo = new window.chrome.cast.media.MediaInfo(activePlaybackUrl, castContentType(activePlaybackProtocol));
+      mediaInfo.streamType = window.chrome.cast.media.StreamType.LIVE;
+      mediaInfo.metadata = new window.chrome.cast.media.GenericMediaMetadata();
+      mediaInfo.metadata.title = streamConfig.title;
+      mediaInfo.metadata.subtitle = `${activePlaybackProtocol.toUpperCase()} via ${activePlaybackHost}`;
+      const request = new window.chrome.cast.media.LoadRequest(mediaInfo);
+      await session.loadMedia(request);
+      setCastStatus("casting");
+    } catch {
+      if (activePlaybackProtocol === "dash") {
+        try {
+          const context = window.cast.framework.CastContext.getInstance();
+          const session = context.getCurrentSession() ?? (await context.requestSession());
+          const mediaInfo = new window.chrome.cast.media.MediaInfo(activeMirror.hlsUrl, castContentType("hls"));
+          mediaInfo.streamType = window.chrome.cast.media.StreamType.LIVE;
+          mediaInfo.metadata = new window.chrome.cast.media.GenericMediaMetadata();
+          mediaInfo.metadata.title = streamConfig.title;
+          mediaInfo.metadata.subtitle = `HLS fallback via ${activeMirror.host}`;
+          await session.loadMedia(new window.chrome.cast.media.LoadRequest(mediaInfo));
+          setCastStatus("casting");
+          return;
+        } catch {
+          // Fall through to failed status below.
+        }
+      }
+      setCastStatus("failed");
+    }
+  }, [activeMirror.hlsUrl, activeMirror.host, activePlaybackHost, activePlaybackProtocol, activePlaybackUrl]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -616,7 +1540,7 @@ export default function App() {
           break;
         case "arrowright":
           event.preventDefault();
-          seekToLive();
+          seekActiveToLive();
           break;
         default:
           break;
@@ -628,7 +1552,7 @@ export default function App() {
   }, [
     hardReconnect,
     retryNow,
-    seekToLive,
+    seekActiveToLive,
     setVolume,
     toggleFullscreen,
     toggleMute,
@@ -637,9 +1561,9 @@ export default function App() {
     ui.volume
   ]);
 
-  const copyStreamUrl = () => copyText("Stream URL", activeMirror.streamUrl);
-  const copyVlcCommand = () => copyText("VLC command", `vlc ${activeMirror.streamUrl}`);
-  const copyMpvCommand = () => copyText("MPV command", `mpv ${activeMirror.streamUrl}`);
+  const copyStreamUrl = () => copyText("Stream URL", activePlaybackUrl);
+  const copyVlcCommand = () => copyText("VLC command", `vlc ${activePlaybackUrl}`);
+  const copyMpvCommand = () => copyText("MPV command", `mpv ${activePlaybackUrl}`);
   const toggleVolumePanel = () => {
     setOpenDropdown(null);
     dispatch({ type: "set-more", open: false });
@@ -650,9 +1574,15 @@ export default function App() {
     dispatch({ type: "toggle-more" });
   };
 
+  const playbackProtocolLabel = activePlaybackProtocol.toUpperCase();
+  const playbackHostLabel = customSrc ? activeSourceLabel : activePlaybackHost;
+  const showCenterPlay = !playing && !activePlayerBusy;
+  const showCenterNotice = Boolean(playerNotice) || activePlayerBusy;
+  const centerNoticeText = playerNotice ?? activeStatus;
+
   const playerClass = [
     "player-shell",
-    controlsVisible || !playing || playerBusy || ui.moreMenuOpen || volumePanelOpen
+    controlsVisible || !playing || activePlayerBusy || ui.moreMenuOpen || volumePanelOpen
       ? "controls-visible"
       : "controls-hidden",
     fullscreen ? "is-fullscreen" : "",
@@ -711,18 +1641,18 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          <a className="chip chip-live" href={activeMirror.streamUrl} target="_blank" rel="noreferrer">
-            Open HLS
+          <a className="chip chip-live" href={activeSource.url} target="_blank" rel="noreferrer">
+            Open {activeSource.protocol.toUpperCase()}
           </a>
-          <a className="chip" href={streamConfig.ufcScheduleUrl} target="_blank" rel="noreferrer">
-            UFC schedule
+          <a className="chip chip-discord" href={streamConfig.discordUrl} target="_blank" rel="noreferrer">
+            Discord
           </a>
-          <a className="chip" href={streamConfig.githubUrl} target="_blank" rel="noreferrer">
-            GitHub
+          <a className="chip" href={streamConfig.chatUrl} target="_blank" rel="noreferrer">
+            Chat
           </a>
-          <a className="chip" href={streamConfig.twitterUrl} target="_blank" rel="noreferrer">
-            Twitter
-          </a>
+          <span className="viewer-chip" title="Live viewers reported by s.obby.ca">
+            {totalViewers} watching
+          </span>
         </nav>
       </header>
 
@@ -735,10 +1665,60 @@ export default function App() {
                 <h1>{streamConfig.title}</h1>
               </div>
 
-              <div className={`status-badge status-${snapshot.status}`}>
+              <div className={`status-badge status-${activePlaybackStatus}`}>
                 <span aria-hidden="true" />
                 {activeStatus}
               </div>
+            </div>
+
+            <div className="player-source-switcher" aria-label="Playback source">
+              {configuredSources.length > 0 ? (
+                configuredSources.map((source) => {
+                  const active = source.preferred ? autoMode === "primary" : autoMode === "configured" && configuredSourceId === source.id;
+                  const viewers = getViewerCount(viewerCounts, source.id, source.viewer_count);
+                  return (
+                    <button
+                      className={active ? "source-button active" : "source-button"}
+                      type="button"
+                      key={source.id}
+                      onClick={() => switchToConfiguredSource(source)}
+                      title={`${source.label}: ${source.state}`}
+                    >
+                      <span
+                        className={`source-dot source-dot-${configuredSourceTone(source, primaryDot)}`}
+                        aria-hidden="true"
+                      />
+                      <strong>{source.label}</strong>
+                      <small>{viewers} watching</small>
+                    </button>
+                  );
+                })
+              ) : (
+                <button
+                  className={!customSrc ? "source-button active" : "source-button"}
+                  type="button"
+                  onClick={returnToPrimaryPlayback}
+                >
+                  <span className={`source-dot source-dot-${primaryDot}`} aria-hidden="true" />
+                  <strong>Server 1 / Default</strong>
+                  <small>{totalViewers} watching</small>
+                </button>
+              )}
+              {publicSources.map((source, index) => {
+                const active = autoMode === "public" && publicSourceIdx === index;
+                return (
+                  <button
+                    className={active ? "source-button active" : "source-button"}
+                    type="button"
+                    key={source.id || `public-source-${index}`}
+                    onClick={() => switchToPublicSource(index)}
+                  >
+                    <span className={`source-dot source-dot-${publicDotStatus}`} aria-hidden="true" />
+                    <strong>{source.label || `Public ${index + 1}`}</strong>
+                    <small>{active ? "active fallback" : "available fallback"}</small>
+                  </button>
+                );
+              })}
             </div>
 
             <div
@@ -758,17 +1738,44 @@ export default function App() {
                 poster={streamConfig.imageUrl}
                 onClick={handlePlayerSurfaceClick}
               />
+              {customSrc ? (
+                <video
+                  ref={customVideoRef}
+                  className="player custom-src-overlay"
+                  playsInline
+                  preload="auto"
+                  poster={streamConfig.imageUrl}
+                  onClick={handlePlayerSurfaceClick}
+                />
+              ) : null}
 
               <div className="player-topline">
-                <span className={`signal-pill signal-${snapshot.status}`}>{activeStatus}</span>
-                <span>{activeMirror.host}</span>
-                <span>{formatSignedSeconds(snapshot.liveLatencySeconds)} behind</span>
+                <span className={`signal-pill signal-${activePlaybackStatus}`}>{activeStatus}</span>
+                {overlaySource ? (
+                  <span className="signal-pill signal-public">
+                    {overlaySource.label}
+                  </span>
+                ) : null}
+                {customSrc ? (
+                  <button className="button button-small topline-action" type="button" onClick={returnToPrimaryPlayback}>
+                    Back to primary
+                  </button>
+                ) : null}
+                <span>{playbackProtocolLabel} · {playbackHostLabel}</span>
+                <span>{totalViewers} watching</span>
+                <span>{formatSignedSeconds(activeLiveLatencySeconds)} behind</span>
               </div>
 
-              {!playing || playerBusy ? (
+              {showCenterPlay ? (
                 <button className="center-play" type="button" onClick={() => void togglePlayback()}>
-                  {playing ? activeStatus : "Play"}
+                  Play
                 </button>
+              ) : null}
+
+              {showCenterNotice ? (
+                <div className="player-notice" role="status" aria-live="polite">
+                  {centerNoticeText}
+                </div>
               ) : null}
 
               {snapshot.autoplayBlocked ? (
@@ -783,7 +1790,7 @@ export default function App() {
 
               <div className="player-controls" aria-label="Player controls">
                 <div className="timeline-row">
-                  <button className="live-chip" type="button" onClick={seekToLive} aria-label="Go live">
+                  <button className="live-chip" type="button" onClick={seekActiveToLive} aria-label="Go live">
                     <span aria-hidden="true" />
                     LIVE
                   </button>
@@ -791,7 +1798,7 @@ export default function App() {
                     <span className="timeline-fill" style={{ width: `${liveProgressPercent}%` }} />
                     <span className="timeline-thumb" style={{ left: `${liveProgressPercent}%` }} />
                   </div>
-                  <span className="latency-readout">{formatSignedSeconds(snapshot.liveLatencySeconds)} behind</span>
+                  <span className="latency-readout">{formatSignedSeconds(activeLiveLatencySeconds)} behind</span>
                 </div>
 
                 <div className="control-bar">
@@ -849,15 +1856,54 @@ export default function App() {
                     </div>
 
                     <span className="control-readout">
-                      Live stream · {formatSignedSeconds(snapshot.bufferAheadSeconds)} buffer
+                      Live stream · {formatSignedSeconds(activeBufferAheadSeconds)} buffer
                     </span>
+
+                    <div className="source-dots" aria-label="Source status">
+                      {configuredSources.length > 0 ? (
+                        configuredSources.map((source) => {
+                          const active = source.preferred ? autoMode === "primary" : autoMode === "configured" && configuredSourceId === source.id;
+                          return (
+                            <span
+                              className={`source-dot source-dot-${configuredSourceTone(source, primaryDot)}${active ? " source-dot-active" : ""}`}
+                              title={`${source.label}: ${source.state} · ${getViewerCount(viewerCounts, source.id, source.viewer_count)} watching`}
+                              aria-label={`${source.label} ${source.state}`}
+                              key={`dot-${source.id}`}
+                            />
+                          );
+                        })
+                      ) : (
+                        <span
+                          className={`source-dot source-dot-${primaryDot}${autoMode === "primary" ? " source-dot-active" : ""}`}
+                          title={`Server 1 / Default: ${snapshot.status}`}
+                          aria-label={`Server 1 source ${snapshot.status}`}
+                        />
+                      )}
+                      {publicSources.length > 0 ? (
+                        <span
+                          className={`source-dot source-dot-${publicDotStatus}${autoMode === "public" ? " source-dot-active" : ""}`}
+                          title={`Auto public: ${publicDotStatus}`}
+                          aria-label={`Auto public source ${publicDotStatus}`}
+                        />
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="control-right">
                     <button
+                      className={castStatus === "casting" ? "player-icon-button active" : "player-icon-button"}
+                      type="button"
+                      onClick={() => void startCasting()}
+                      disabled={!castAvailable}
+                      aria-label={castStatus === "casting" ? "Casting" : "Cast"}
+                      title={castAvailable ? "Cast" : "Cast unavailable"}
+                    >
+                      <PlayerIcon name="cast" />
+                    </button>
+                    <button
                       className="player-icon-button"
                       type="button"
-                      onClick={retryNow}
+                      onClick={reloadActivePlayback}
                       aria-label="Retry"
                       title="Retry"
                     >
@@ -945,8 +1991,18 @@ export default function App() {
                     <button className="button" type="button" onClick={hardReconnect}>
                       Hard reconnect
                     </button>
+                    {publicSources.length > 0 && autoMode === "primary" ? (
+                      <button className="button" type="button" onClick={() => { primaryBadSince.current = null; setAutoMode("public"); }}>
+                        Use public src
+                      </button>
+                    ) : null}
+                    {customSrc ? (
+                      <button className="button" type="button" onClick={returnToPrimaryPlayback}>
+                        Back to primary
+                      </button>
+                    ) : null}
                     <button className="button" type="button" onClick={copyStreamUrl}>
-                      Copy HLS
+                      Copy {activeSource.protocol.toUpperCase()}
                     </button>
                     <button className="button" type="button" onClick={copyVlcCommand}>
                       Copy VLC
@@ -959,11 +2015,42 @@ export default function App() {
                     </button>
                   </div>
 
+                  <form
+                    className="source-changer-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const url = scInput.trim();
+                      if (!url) return;
+                      void watchCustomSource(url);
+                    }}
+                  >
+                    <span className="menu-field-label">Custom source</span>
+                    <div className="source-changer-row">
+                      <input
+                        className="source-changer-input"
+                        type="url"
+                        value={scInput}
+                        onChange={(e) => setScInput(e.target.value)}
+                        placeholder="SportSurge or stream URL"
+                        disabled={customSrcBusy}
+                      />
+                      <button className="button" type="submit" disabled={customSrcBusy || !scInput.trim()}>
+                        {customSrcBusy ? "Loading…" : "Watch"}
+                      </button>
+                      {customSrc ? (
+                        <button className="button button-danger" type="button" onClick={clearCustomSource}>
+                          Stop
+                        </button>
+                      ) : null}
+                    </div>
+                    {customSrcMsg ? <span className="source-changer-msg">{customSrcMsg}</span> : null}
+                  </form>
+
                   {ui.statsOpen ? (
                     <div className="menu-stats" aria-label="Advanced diagnostics">
                       <div>
                         <span>Mode</span>
-                        <strong>{snapshot.mode}</strong>
+                        <strong>{snapshot.activeProtocol.toUpperCase()} / {snapshot.mode}</strong>
                       </div>
                       <div>
                         <span>Latency</span>
@@ -988,8 +2075,16 @@ export default function App() {
                         <strong>{retryEta(snapshot.nextRetryAtMs)}</strong>
                       </div>
                       <div>
-                        <span>Shortcut map</span>
-                        <strong>Space, M, F, P, R</strong>
+                        <span>Cast</span>
+                        <strong>{castAvailable ? castStatus : "unavailable"}</strong>
+                      </div>
+                      <div>
+                        <span>Viewers</span>
+                        <strong>{totalViewers}</strong>
+                      </div>
+                      <div>
+                        <span>Source</span>
+                        <strong>{activeSourceLabel}</strong>
                       </div>
                     </div>
                   ) : null}
@@ -1000,7 +2095,7 @@ export default function App() {
             <div className="signal-strip" aria-label="Playback health">
               <div>
                 <span>Mode</span>
-                <strong>{snapshot.mode}</strong>
+                <strong>{snapshot.activeProtocol.toUpperCase()} / {snapshot.mode}</strong>
               </div>
               <div>
                 <span>Buffer</span>
@@ -1013,6 +2108,10 @@ export default function App() {
               <div>
                 <span>Segment</span>
                 <strong>{relativeTime(snapshot.lastSegmentAtMs)}</strong>
+              </div>
+              <div>
+                <span>Viewers</span>
+                <strong>{totalViewers}</strong>
               </div>
             </div>
 
@@ -1085,6 +2184,14 @@ export default function App() {
         </section>
 
         <section className="utility-panel" aria-label="Stream tools and links">
+          <div className="utility-group discord-group">
+            <h2>Community</h2>
+            <p>Join Discord for stream notices, source reports, and chat when the embedded chat is busy.</p>
+            <a className="button button-primary" href={streamConfig.discordUrl} target="_blank" rel="noreferrer">
+              Open Discord
+            </a>
+          </div>
+
           <div className="utility-group">
             <h2>Stream tools</h2>
             <div className="tool-grid">
@@ -1104,27 +2211,6 @@ export default function App() {
                 <strong>Copy MPV</strong>
                 <span>External player</span>
               </button>
-            </div>
-          </div>
-
-          <div className="utility-group">
-            <h2>Mirrors</h2>
-            <div className="mirror-list">
-              {streamConfig.mirrors.map((mirror, index) => (
-                <div className="mirror-row" key={mirror.id}>
-                  <button
-                    className={index === snapshot.activeMirrorIndex ? "mirror-button active" : "mirror-button"}
-                    type="button"
-                    onClick={() => switchMirror(index)}
-                  >
-                    <span>{mirror.label}</span>
-                    <strong>{mirror.host}</strong>
-                  </button>
-                  <a className="button button-small" href={mirror.pageUrl} target="_blank" rel="noreferrer">
-                    Open
-                  </a>
-                </div>
-              ))}
             </div>
           </div>
 

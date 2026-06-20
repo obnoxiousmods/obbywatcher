@@ -5,11 +5,12 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks: {
           hls: ["hls.js"],
+          shaka: ["shaka-player"],
           react: ["react", "react-dom"]
         }
       }

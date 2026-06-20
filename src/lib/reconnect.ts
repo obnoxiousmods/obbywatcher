@@ -42,6 +42,18 @@ export type ManifestProbeFailure = {
 
 export type ManifestProbe = ManifestProbeResult | ManifestProbeFailure;
 
+type MirrorDelivery = "cloudflare" | "direct";
+
+type MirrorLike = {
+  id: string;
+  delivery: MirrorDelivery;
+};
+
+type SourceLike = {
+  mirrorId: string;
+  protocol: string;
+};
+
 export function retryDelayMs(
   attempt: number,
   options: RetryBackoffOptions,
@@ -59,6 +71,36 @@ export function retryDelayMs(
 export function nextMirrorIndex(currentIndex: number, totalMirrors: number) {
   if (totalMirrors <= 1) return 0;
   return (currentIndex + 1) % totalMirrors;
+}
+
+export function chooseNextSourceIndex(
+  currentIndex: number,
+  sources: readonly SourceLike[],
+  mirrors: readonly MirrorLike[]
+) {
+  if (sources.length <= 1) return 0;
+
+  const currentSource = sources[currentIndex] ?? sources[0];
+  const currentMirror = mirrors.find((mirror) => mirror.id === currentSource?.mirrorId);
+  const currentDelivery = currentMirror?.delivery ?? "cloudflare";
+
+  const ranked = sources
+    .map((source, index) => {
+      const mirror = mirrors.find((item) => item.id === source.mirrorId);
+      const delivery = mirror?.delivery ?? "cloudflare";
+      const distance = index > currentIndex ? index - currentIndex : index + sources.length - currentIndex;
+      const sameMirrorPenalty = source.mirrorId === currentSource?.mirrorId ? 100 : 0;
+      const sameDeliveryPenalty = delivery === currentDelivery ? 20 : 0;
+      const differentProtocolPenalty = source.protocol === currentSource?.protocol ? 0 : 5;
+      return {
+        index,
+        score: sameMirrorPenalty + sameDeliveryPenalty + differentProtocolPenalty + distance,
+      };
+    })
+    .filter((candidate) => candidate.index !== currentIndex)
+    .sort((left, right) => left.score - right.score);
+
+  return ranked[0]?.index ?? nextMirrorIndex(currentIndex, sources.length);
 }
 
 export function shouldRotateMirror(consecutiveSourceFailures: number, totalMirrors: number, threshold: number) {
@@ -93,8 +135,19 @@ export function getBufferedAhead(buffered: TimeRangeSource, currentTime: number)
 }
 
 export function sourceWithCacheBust(source: string, stamp: number | string) {
-  const joiner = source.includes("?") ? "&" : "?";
-  return `${source}${joiner}ow=${encodeURIComponent(String(stamp))}`;
+  // Strip any existing cache-bust param so reloads/reconnects don't accumulate
+  // duplicate query keys.
+  const [base, search] = source.split("?", 2);
+  const params = search
+    ? new URLSearchParams(
+        search
+          .split("&")
+          .filter((pair) => !pair.startsWith("ow=") && pair !== "ow=")
+          .join("&")
+      )
+    : new URLSearchParams();
+  params.set("ow", String(stamp));
+  return `${base}?${params.toString()}`;
 }
 
 export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
@@ -138,6 +191,33 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
     segmentCount,
     endSequence,
     isLive
+  };
+}
+
+export function parseDashManifest(manifest: string): ParsedManifestProbe | null {
+  if (!manifest.includes("<MPD")) return null;
+  const representationCount = (manifest.match(/<Representation\b/g) ?? []).length;
+  const segmentTemplateCount = (manifest.match(/<SegmentTemplate\b/g) ?? []).length;
+  const mediaSequenceMatch = manifest.match(/startNumber="(\d+)"/);
+  const durationMatch = manifest.match(/duration="(\d+)"/);
+  const timescaleMatch = manifest.match(/timescale="(\d+)"/);
+  const segmentTimelineCount = (manifest.match(/<S\b/g) ?? []).length;
+  const mediaSequence = mediaSequenceMatch ? Number.parseInt(mediaSequenceMatch[1], 10) : null;
+  const duration = durationMatch ? Number.parseFloat(durationMatch[1]) : null;
+  const timescale = timescaleMatch ? Number.parseFloat(timescaleMatch[1]) : null;
+  const targetDurationSeconds = duration && timescale ? Math.max(1, duration / timescale) : 4;
+  const segmentCount = Math.max(segmentTimelineCount, segmentTemplateCount > 0 ? representationCount : 0);
+  const endSequence = mediaSequence === null ? null : mediaSequence + Math.max(0, segmentCount - 1);
+  const staticPresentation = /type="static"/.test(manifest);
+
+  if (representationCount === 0 && segmentTemplateCount === 0) return null;
+
+  return {
+    mediaSequence,
+    targetDurationSeconds,
+    segmentCount,
+    endSequence,
+    isLive: !staticPresentation
   };
 }
 

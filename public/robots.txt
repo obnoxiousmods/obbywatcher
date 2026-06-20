@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://live.obnoxious.lol/sitemap.xml
+Sitemap: https://fight.nswfiles.com/sitemap.xml

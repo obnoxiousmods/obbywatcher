@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  chooseNextSourceIndex,
   chooseFreshestProbe,
   getBufferedAhead,
   isPlaylistStale,
   nextMirrorIndex,
+  parseDashManifest,
   parseHlsManifest,
   retryDelayMs,
   shouldRotateMirror,
@@ -24,6 +26,39 @@ describe("reconnect policy", () => {
     expect(shouldRotateMirror(2, 2, 2)).toBe(true);
     expect(shouldRotateMirror(4, 1, 2)).toBe(false);
     expect(nextMirrorIndex(1, 2)).toBe(0);
+  });
+
+  it("prefers switching delivery families before trying another same-family route", () => {
+    expect(
+      chooseNextSourceIndex(
+        0,
+        [
+          { mirrorId: "fight", protocol: "dash" },
+          { mirrorId: "live", protocol: "dash" },
+          { mirrorId: "direct", protocol: "dash" },
+          { mirrorId: "fight", protocol: "hls" },
+          { mirrorId: "live", protocol: "hls" },
+          { mirrorId: "direct", protocol: "hls" },
+        ],
+        [
+          { id: "fight", delivery: "cloudflare" },
+          { id: "live", delivery: "cloudflare" },
+          { id: "direct", delivery: "direct" },
+        ]
+      )
+    ).toBe(2);
+  });
+
+  it("cache-busts URLs without accumulating duplicate ow params", () => {
+    expect(sourceWithCacheBust("https://example.com/stream.m3u8", "abc")).toBe(
+      "https://example.com/stream.m3u8?ow=abc"
+    );
+    expect(sourceWithCacheBust("https://example.com/stream.m3u8?ow=old", "abc")).toBe(
+      "https://example.com/stream.m3u8?ow=abc"
+    );
+    expect(sourceWithCacheBust("https://example.com/stream.m3u8?x=1&ow=old", "abc")).toBe(
+      "https://example.com/stream.m3u8?x=1&ow=abc"
+    );
   });
 
   it("detects stale playlists from target duration", () => {
@@ -83,6 +118,29 @@ seg122.ts`);
       targetDurationSeconds: 4,
       segmentCount: 3,
       endSequence: 122,
+      isLive: true
+    });
+  });
+
+  it("parses live DASH manifests for active probing", () => {
+    const parsed = parseDashManifest(`<MPD type="dynamic">
+<Period>
+<AdaptationSet>
+<Representation id="0" bandwidth="2500000">
+<SegmentTemplate timescale="1" duration="4" startNumber="20" media="ufc_chunk_0_$Number$.m4s" />
+</Representation>
+<Representation id="2" bandwidth="6000000">
+<SegmentTemplate timescale="1" duration="4" startNumber="20" media="ufc_chunk_2_$Number$.m4s" />
+</Representation>
+</AdaptationSet>
+</Period>
+</MPD>`);
+
+    expect(parsed).toEqual({
+      mediaSequence: 20,
+      targetDurationSeconds: 4,
+      segmentCount: 2,
+      endSequence: 21,
       isLive: true
     });
   });

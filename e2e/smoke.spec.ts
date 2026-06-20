@@ -10,9 +10,10 @@ test("loads the viewer shell", async ({ page }) => {
   await expect(page.getByRole("listbox", { name: "Theme" }).getByRole("option")).toHaveCount(10);
   await page.keyboard.press("Escape");
   await expect(page.getByText("UFC schedule").first()).toBeVisible();
-  await expect(page.getByText("Burns vs. Malott").first()).toBeVisible();
+  await expect(page.locator(".featured-fight h3")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Primary live.obnoxious.lol" })).toBeVisible();
+  await expect(page.locator(".player-source-switcher")).toBeVisible();
+  await expect(page.locator(".player-source-switcher .source-button").first()).toBeVisible();
 });
 
 test("theme picker applies pastel themes", async ({ page }) => {
@@ -43,12 +44,13 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   const mirrorPicker = menu.getByRole("button", { name: "Mirror", exact: true });
   await expect(mirrorPicker).toBeVisible();
   await mirrorPicker.click();
-  await expect(menu.getByRole("listbox", { name: "Mirror" }).getByRole("option")).toHaveCount(2);
+  await expect(menu.getByRole("listbox", { name: "Mirror" }).getByRole("option")).toHaveCount(3);
   await mirrorPicker.click();
   const diagnostics = page.getByLabel("Advanced diagnostics");
   const showStats = menu.getByRole("button", { name: "Show stats" });
   if (await showStats.isVisible()) await showStats.click();
-  await expect(diagnostics).toContainText("Shortcut map");
+  await expect(diagnostics).toContainText("Viewers");
+  await expect(diagnostics).toContainText("Source");
 
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();

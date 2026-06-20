@@ -4,8 +4,8 @@ test("serves complete primary SEO metadata", async ({ page }) => {
   await page.goto("/");
 
   await expect(page).toHaveTitle("ObbyWatcher | Live Fight Stream, Chat & HLS Mirror Player");
-  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", "https://live.obnoxious.lol/");
-  await expect(page.locator('link[rel="alternate"]')).toHaveAttribute("href", "https://fight.nswfiles.com/");
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", "https://fight.nswfiles.com/");
+  await expect(page.locator('link[rel="alternate"]')).toHaveAttribute("href", "https://live.obnoxious.lol/");
   await expect(page.locator('meta[name="description"]')).toHaveAttribute(
     "content",
     /HLS playback, mirror failover, chat/
@@ -22,11 +22,11 @@ test("serves complete primary SEO metadata", async ({ page }) => {
 test("serves crawl support files", async ({ request }) => {
   const robots = await request.get("/robots.txt");
   expect(robots.ok()).toBe(true);
-  expect(await robots.text()).toContain("Sitemap: https://live.obnoxious.lol/sitemap.xml");
+  expect(await robots.text()).toContain("Sitemap: https://fight.nswfiles.com/sitemap.xml");
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.ok()).toBe(true);
-  expect(await sitemap.text()).toContain("<loc>https://live.obnoxious.lol/</loc>");
+  expect(await sitemap.text()).toContain("<loc>https://fight.nswfiles.com/</loc>");
 
   const manifest = await request.get("/site.webmanifest");
   expect(manifest.ok()).toBe(true);

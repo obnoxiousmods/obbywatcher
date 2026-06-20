@@ -17,7 +17,7 @@ export type UfcEvent = {
   note?: string;
 };
 
-export const ufcScheduleLastChecked = "2026-04-18";
+export const ufcScheduleLastChecked = "2026-06-15";
 
 export const ufcSchedule: UfcEvent[] = [
   {
@@ -116,15 +116,15 @@ export const ufcSchedule: UfcEvent[] = [
     note: "Start time TBA"
   },
   {
-    id: "ufc-white-house",
-    title: "UFC at the White House: Topuria vs. Gaethje",
+    id: "ufc-freedom-250",
+    title: "UFC Freedom 250: Topuria vs. Gaethje",
     shortTitle: "Topuria vs. Gaethje",
     dateLabel: "Sunday, June 14",
     venue: "The White House South Lawn",
     city: "Washington, D.C.",
     stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/where-to-watch-white-house-ufc/",
+    sourceUrl: "https://www.ufc.com/event/ufc-freedom-250",
     mainCardIso: "2026-06-15T00:00:00Z",
-    slots: [{ label: "Fight card", iso: "2026-06-15T00:00:00Z" }]
+    slots: [{ label: "Main card", iso: "2026-06-15T00:00:00Z" }]
   }
 ];

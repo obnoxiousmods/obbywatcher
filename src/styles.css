@@ -399,6 +399,7 @@
   }
 
   .chip,
+  .viewer-chip,
   .button,
   .control-button,
   .live-button,
@@ -419,6 +420,7 @@
   }
 
   .chip-live,
+  .chip-discord,
   .button-primary,
   .primary-control,
   .live-button,
@@ -451,6 +453,45 @@
 
   .watch {
     @apply grid;
+  }
+
+  .player-source-switcher {
+    @apply flex flex-wrap gap-2 border-b border-ow-border bg-white/[0.025] px-4 py-3;
+  }
+
+  .player-source-switcher .button.active,
+  .source-button.active {
+    @apply border-ow-lavender/60 bg-ow-lavender/18 text-ow-text;
+    box-shadow: 0 0 0 1px var(--theme-glow);
+  }
+
+  .source-button {
+    @apply grid min-h-[58px] min-w-[150px] cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0 rounded-lg border border-ow-border bg-white/[0.045] px-3 py-2 text-left text-ow-text transition;
+  }
+
+  .source-button:hover {
+    @apply -translate-y-px border-ow-lavender/60 bg-white/10;
+  }
+
+  .source-button .source-dot {
+    grid-row: 1 / span 2;
+  }
+
+  .source-button strong,
+  .source-button small {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .source-button strong {
+    @apply text-[13px] font-black;
+  }
+
+  .source-button small {
+    @apply text-[12px] text-ow-muted;
+  }
+
+  .viewer-chip {
+    @apply min-h-9 whitespace-nowrap px-3 py-2 text-[13px] font-black text-ow-mint;
   }
 
   .watch-titlebar,
@@ -525,8 +566,14 @@
     @apply block h-full w-full bg-black object-contain;
   }
 
+  .native-controls .player-topline,
+  .native-controls .player-controls,
+  .native-controls .center-play {
+    @apply hidden;
+  }
+
   .player-topline {
-    @apply pointer-events-none absolute left-3 right-3 top-3 flex flex-wrap items-center gap-2 text-[12px] text-ow-text/90 transition-opacity;
+    @apply pointer-events-none absolute left-3 right-3 top-3 z-50 flex flex-wrap items-center gap-2 text-[12px] text-ow-text/90 transition-opacity;
   }
 
   .player-topline > span {
@@ -534,12 +581,26 @@
     backdrop-filter: blur(10px);
   }
 
+  .player-topline > button {
+    @apply pointer-events-auto;
+    backdrop-filter: blur(10px);
+  }
+
   .signal-pill {
     @apply font-black text-ow-bg;
   }
 
+  .topline-action {
+    @apply border-white/12 bg-black/58 text-ow-text hover:border-ow-lavender/60 hover:bg-black/72;
+  }
+
+  .signal-public {
+    background: rgba(205, 183, 255, 0.85);
+    color: #0a0818;
+  }
+
   .center-play {
-    @apply absolute left-1/2 top-1/2 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-lg border border-white/20 bg-black/72 text-[15px] font-black text-ow-text transition;
+    @apply absolute left-1/2 top-1/2 z-50 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 cursor-pointer place-items-center rounded-lg border border-white/20 bg-black/72 text-[15px] font-black text-ow-text transition;
     backdrop-filter: blur(14px);
   }
 
@@ -548,7 +609,7 @@
   }
 
   .audio-prompt {
-    @apply absolute left-3 top-14 grid max-w-[320px] gap-2 rounded-lg border border-ow-rose/45 bg-black/86 p-3 text-sm;
+    @apply absolute left-3 top-14 z-50 grid max-w-[320px] gap-2 rounded-lg border border-ow-rose/45 bg-black/86 p-3 text-sm;
     box-shadow: var(--shadow);
     backdrop-filter: blur(14px);
   }
@@ -558,7 +619,7 @@
   }
 
   .player-controls {
-    @apply absolute inset-x-0 bottom-0 z-20 grid gap-2 px-3 pb-3 pt-16 transition;
+    @apply absolute inset-x-0 bottom-0 z-50 grid gap-2 px-3 pb-3 pt-16 transition;
     background: linear-gradient(180deg, transparent, rgba(8, 7, 13, 0.58) 30%, rgba(8, 7, 13, 0.94));
   }
 
@@ -734,6 +795,71 @@
     @apply m-0 border-t border-ow-rose/35 bg-ow-rose/12 px-4 py-3 text-[13px] text-[#ffd9e2];
   }
 
+  .custom-src-overlay {
+    @apply absolute inset-0 z-40 block h-full w-full bg-black object-contain;
+  }
+
+  .source-changer-form {
+    @apply grid gap-2 border-t border-ow-border pt-3;
+  }
+
+  .menu-field-label {
+    @apply text-[12px] font-semibold text-ow-muted;
+  }
+
+  .source-changer-row {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .source-changer-input {
+    @apply min-w-0 flex-1 rounded-lg border border-ow-border bg-white/[0.055] px-3 py-1.5 text-[13px] text-ow-text placeholder:text-ow-muted/60 outline-none focus:border-ow-muted;
+  }
+
+  .source-changer-msg {
+    @apply block text-[12px] text-ow-muted;
+  }
+
+  .button-danger {
+    @apply border-ow-rose/50 bg-ow-rose/15 text-[#ffd9e2] hover:bg-ow-rose/25;
+  }
+
+  .source-dots {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 4px;
+  }
+
+  .source-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    transition: background-color 0.4s, box-shadow 0.4s;
+    flex-shrink: 0;
+  }
+
+  .source-dot-green {
+    background: #4ade80;
+    box-shadow: 0 0 6px #4ade8088;
+  }
+
+  .source-dot-yellow {
+    background: #facc15;
+    box-shadow: 0 0 6px #facc1566;
+  }
+
+  .source-dot-red {
+    background: #f87171;
+    box-shadow: 0 0 5px #f8717144;
+  }
+
+  /* ring when this source is the active one */
+  .source-dot-active {
+    border-color: rgba(255, 255, 255, 0.55);
+  }
+
   .chat-panel {
     @apply flex min-h-[420px] flex-col;
   }
@@ -820,7 +946,7 @@
   }
 
   .utility-panel {
-    @apply grid gap-3 p-3 lg:grid-cols-[1fr_1fr_1.2fr];
+    @apply grid gap-3 p-3 lg:grid-cols-[0.9fr_1fr_1fr_1.2fr];
   }
 
   .utility-group {
@@ -829,6 +955,14 @@
 
   .utility-group h2 {
     @apply mb-3;
+  }
+
+  .discord-group {
+    @apply content-start;
+  }
+
+  .discord-group p {
+    @apply mb-3 text-[13px] leading-snug text-ow-muted;
   }
 
   .tool-grid,
@@ -910,6 +1044,11 @@
   .chip {
     flex: 0 0 auto;
     min-width: auto;
+    scroll-snap-align: start;
+  }
+
+  .viewer-chip {
+    flex: 0 0 auto;
     scroll-snap-align: start;
   }
 
