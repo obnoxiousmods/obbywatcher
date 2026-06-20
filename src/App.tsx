@@ -93,6 +93,19 @@ type ViewerCounts = {
   updated_at: number;
 };
 
+type WatcherNewsEntry = {
+  id: string;
+  title: string;
+  body: string;
+  tone?: SourceTone | "info" | "neutral" | string;
+  visible?: boolean;
+  pinned?: boolean;
+  created_at?: number;
+  updated_at?: number;
+  link_url?: string;
+  link_label?: string;
+};
+
 type OverlaySource = {
   kind: "public" | "configured" | "custom";
   id: string;
@@ -489,6 +502,7 @@ export default function App() {
   const [configuredSources, setConfiguredSources] = useState<ConfiguredSource[]>([]);
   const [configuredSourceId, setConfiguredSourceId] = useState<string | null>(null);
   const [viewerCounts, setViewerCounts] = useState<ViewerCounts | null>(null);
+  const [watcherNews, setWatcherNews] = useState<WatcherNewsEntry[]>([]);
   const [overlaySource, setOverlaySource] = useState<OverlaySource | null>(null);
   const [autoMode, setAutoMode] = useState<AutoMode>("primary");
   const primaryBadSince = useRef<number | null>(null);
@@ -964,14 +978,43 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function fetchWatcherNews() {
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/news`, { cache: "no-store" });
+        const data = await resp.json() as { ok: boolean; entries?: WatcherNewsEntry[] };
+        if (!cancelled && data.ok) {
+          setWatcherNews(Array.isArray(data.entries) ? data.entries : []);
+        }
+      } catch {
+        // News is advisory; the stream UI should remain usable if the feed is unavailable.
+      }
+    }
+
+    void fetchWatcherNews();
+    const interval = window.setInterval(fetchWatcherNews, 3 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
     const events = new EventSource(`${OBBY_COCKPIT}/api/live`);
     events.addEventListener("status", (event) => {
       try {
-        const data = JSON.parse((event as MessageEvent).data) as { ok: boolean; sources?: ConfiguredSource[]; viewers?: ViewerCounts };
+        const data = JSON.parse((event as MessageEvent).data) as {
+          ok: boolean;
+          sources?: ConfiguredSource[];
+          viewers?: ViewerCounts;
+          news?: WatcherNewsEntry[];
+        };
         if (!data.ok) return;
         if (Array.isArray(data.sources)) setConfiguredSources(publicCockpitSources(data.sources));
         if (data.viewers) setViewerCounts(data.viewers);
+        if (Array.isArray(data.news)) setWatcherNews(data.news);
       } catch {
         // Ignore malformed live event payloads and wait for the next update.
       }
@@ -2275,6 +2318,37 @@ export default function App() {
             <iframe title="Chat" src={streamConfig.chatUrl} loading="lazy" referrerPolicy="no-referrer" />
           </aside>
         </section>
+
+        {watcherNews.length > 0 ? (
+          <section className="news-panel" aria-label="Stream news">
+            <div className="panel-heading">
+              <div>
+                <p className="kicker">Updates</p>
+                <h2>Stream news</h2>
+              </div>
+              <span>{watcherNews.length} item{watcherNews.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="news-list">
+              {watcherNews.map((entry) => (
+                <article className={`news-card news-card-${entry.tone || "info"}${entry.pinned ? " news-card-pinned" : ""}`} key={entry.id}>
+                  <div className="news-card-top">
+                    <strong>{entry.title || "Update"}</strong>
+                    <span>{entry.pinned ? "Pinned" : entry.tone || "Info"}</span>
+                  </div>
+                  {entry.body ? <p>{entry.body}</p> : null}
+                  <div className="news-card-meta">
+                    <span>{entry.updated_at ? new Date(entry.updated_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "Just posted"}</span>
+                    {entry.link_url ? (
+                      <a href={entry.link_url} target="_blank" rel="noreferrer">
+                        {entry.link_label || "Open"}
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="schedule-panel" aria-label="UFC schedule">
           <div className="panel-heading">

@@ -133,6 +133,43 @@ test("renders accurate per-source viewer counts and status dots", async ({ page 
   await expect(page.locator(".source-dots .source-dot")).toHaveCount(4);
 });
 
+test("renders cockpit-managed stream news", async ({ page }) => {
+  await page.route("https://s.obby.ca/api/news", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        entries: [
+          {
+            id: "main-card",
+            title: "Main card live",
+            body: "Server 1 is primary. Public backups are available below.",
+            tone: "info",
+            pinned: true,
+            visible: true,
+            updated_at: Date.UTC(2026, 5, 20, 23, 0),
+            link_url: "https://discord.gg/fJCUPDKej5",
+            link_label: "Discord"
+          }
+        ],
+        count: 1
+      })
+    });
+  });
+  await page.route("https://s.obby.ca/api/live", async (route) => {
+    await route.fulfill({ contentType: "text/event-stream", body: "" });
+  });
+
+  await page.goto("/");
+
+  const news = page.getByRole("region", { name: "Stream news" });
+  await expect(news).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Stream news" })).toBeVisible();
+  await expect(news.getByText("Main card live")).toBeVisible();
+  await expect(news.getByText("Server 1 is primary. Public backups are available below.")).toBeVisible();
+  await expect(news.getByRole("link", { name: "Discord" })).toHaveAttribute("href", "https://discord.gg/fJCUPDKej5");
+});
+
 test("theme picker applies pastel themes", async ({ page }) => {
   await page.goto("/");
 
