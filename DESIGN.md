@@ -57,6 +57,18 @@ Implementation ownership:
 - Manifest parsing/probing helpers live in `src/lib/reconnect.ts`.
 - Proxy caching, third-party request headers, and public source URL inventory remain Obbystreams responsibilities.
 
+## DASH/HLS Protocol Spec
+
+Server 1/default supports both DASH and HLS for each configured mirror.
+
+- Apple native playback paths, including Safari and iOS browsers, must default to HLS because native HLS is the most reliable path there.
+- Non-Apple browsers with Shaka support default to DASH because the app can control DASH live recovery and buffering through Shaka.
+- Browsers without DASH support use HLS through hls.js when available, then native HLS when hls.js is unavailable.
+- Manual mirror changes preserve the current protocol when that protocol exists on the selected mirror.
+- Manual protocol changes preserve the current mirror when that mirror has the selected protocol.
+- If a manually requested protocol is unsupported by the device, the source ordering falls back to the available protocol instead of leaving playback unsupported.
+- Protocol ordering and defaults are covered by `src/hooks/useLiveHls.test.ts`; the settings-menu Protocol control is covered by e2e tests.
+
 ## Tradeoffs
 
 The watcher trusts the cockpit public API for official Server 1 status and pasted public source inventory. Public stream playback must use the `playback_url` proxy so third-party CORS never blocks the browser. The source URLs and required request headers are owned by Obbystreams and documented in `/home/joey/obbystreams/public_srcs.md`.

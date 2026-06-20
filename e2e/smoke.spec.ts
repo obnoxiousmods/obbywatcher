@@ -46,6 +46,13 @@ test("custom controls expose diagnostics and keyboard mute", async ({ page }) =>
   await mirrorPicker.click();
   await expect(menu.getByRole("listbox", { name: "Mirror" }).getByRole("option")).toHaveCount(3);
   await mirrorPicker.click();
+  const protocolPicker = menu.getByRole("button", { name: "Protocol", exact: true });
+  await expect(protocolPicker).toBeVisible();
+  await protocolPicker.click();
+  await expect(menu.getByRole("listbox", { name: "Protocol" }).getByRole("option")).toHaveCount(2);
+  await expect(menu.getByRole("option", { name: /DASH/ })).toBeVisible();
+  await expect(menu.getByRole("option", { name: /HLS/ })).toBeVisible();
+  await protocolPicker.click();
   const diagnostics = page.getByLabel("Advanced diagnostics");
   const showStats = menu.getByRole("button", { name: "Show stats" });
   if (await showStats.isVisible()) await showStats.click();

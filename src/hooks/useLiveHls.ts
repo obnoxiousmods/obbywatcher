@@ -20,6 +20,14 @@ import type { ManifestProbe, ManifestProbeFailure, ManifestProbeResult } from ".
 
 export type LivePlaybackStatus = "idle" | "connecting" | "live" | "buffering" | "reconnecting" | "offline" | "failed";
 export type PlaybackEngine = "shaka" | "hls.js" | "native" | "unsupported" | "pending";
+export type ProtocolPreference = StreamProtocol | "auto";
+
+export type PlaybackCapability = {
+  appleNativePath: boolean;
+  nativeHls: boolean;
+  hlsJs: boolean;
+  dash: boolean;
+};
 
 export type LiveProbeSnapshot = {
   ok: boolean;
@@ -81,6 +89,7 @@ export type LiveHlsController = {
   enableAudio: () => Promise<void>;
   seekToLive: () => void;
   switchMirror: (index: number) => void;
+  switchProtocol: (protocol: StreamProtocol) => void;
 };
 
 const defaultOptions: Required<LiveHlsOptions> = {
@@ -140,6 +149,7 @@ type ControllerActions = {
   enableAudio: () => Promise<void>;
   seekToLive: () => void;
   switchMirror: (index: number) => void;
+  switchProtocol: (protocol: StreamProtocol) => void;
 };
 
 type PlaybackQualityVideo = HTMLVideoElement & {
@@ -200,17 +210,53 @@ function getFrameStats(video: HTMLVideoElement) {
   };
 }
 
+export function selectPreferredProtocol(capability: PlaybackCapability): ProtocolPreference {
+  if (capability.appleNativePath && capability.nativeHls) return "hls";
+  if (capability.dash) return "dash";
+  if (capability.hlsJs || capability.nativeHls) return "hls";
+  return "auto";
+}
+
+export function orderedSourcesForCapabilities(
+  mirrors: readonly StreamMirror[],
+  capability: PlaybackCapability,
+  preference: ProtocolPreference = "auto"
+): StreamSource[] {
+  const allowedProtocols: StreamProtocol[] = [];
+  if (capability.dash) allowedProtocols.push("dash");
+  if (capability.hlsJs || capability.nativeHls) allowedProtocols.push("hls");
+  if (allowedProtocols.length === 0) return [];
+
+  const requested = preference === "auto" ? selectPreferredProtocol(capability) : preference;
+  const preferred = requested !== "auto" && allowedProtocols.includes(requested) ? requested : allowedProtocols[0];
+  const protocolOrder = [
+    preferred,
+    ...allowedProtocols.filter((protocol) => protocol !== preferred)
+  ].filter((protocol): protocol is StreamProtocol => protocol === "dash" || protocol === "hls");
+
+  return protocolOrder.flatMap((protocol) =>
+    mirrors.flatMap((mirror) => sourcesForMirror(mirror).filter((source) => source.protocol === protocol))
+  );
+}
+
+function getPlaybackCapability(video: HTMLVideoElement): PlaybackCapability {
+  return {
+    appleNativePath: isAppleNativePath(),
+    nativeHls: canUseNativeHls(video),
+    hlsJs: Hls.isSupported(),
+    dash: canUseDash()
+  };
+}
+
 function orderedSources(mirrors: readonly StreamMirror[], video: HTMLVideoElement): StreamSource[] {
-  const all = mirrors.flatMap(sourcesForMirror);
-  const dashSources = all.filter((source) => source.protocol === "dash");
-  const hlsSources = all.filter((source) => source.protocol === "hls");
+  const capability = getPlaybackCapability(video);
 
   // Apple browsers, including all iOS browsers, should stay on HLS. MSE-driven DASH remains the better
   // default for Chromium/Firefox class browsers where Shaka support is available and we can control live recovery.
-  if (isAppleNativePath() && canUseNativeHls(video)) return hlsSources;
-  if (canUseDash()) return [...dashSources, ...hlsSources];
-  if (Hls.isSupported() || canUseNativeHls(video)) return hlsSources;
-  return [];
+  if (capability.appleNativePath && capability.nativeHls) {
+    return orderedSourcesForCapabilities(mirrors, { ...capability, dash: false }, "hls");
+  }
+  return orderedSourcesForCapabilities(mirrors, capability, "auto");
 }
 
 function probeSnapshotFromResult(probe: ManifestProbe, sources: readonly StreamSource[]): LiveProbeSnapshot {
@@ -258,7 +304,8 @@ export function useLiveHls(
     hardReconnect: () => undefined,
     enableAudio: async () => undefined,
     seekToLive: () => undefined,
-    switchMirror: () => undefined
+    switchMirror: () => undefined,
+    switchProtocol: () => undefined
   });
 
   useEffect(() => {
@@ -680,14 +727,28 @@ export function useLiveHls(
       switchMirror: (index: number) => {
         if (index < 0 || index >= mirrors.length) return;
         const mirror = mirrors[index];
-        const sourceIndex = sources.findIndex((source) => source.mirrorId === mirror.id);
-        if (sourceIndex < 0) return;
+        const currentProtocol = (sources[activeSourceIndex] ?? sources[0])?.protocol;
+        const sourceIndex = sources.findIndex((source) => source.mirrorId === mirror.id && source.protocol === currentProtocol);
+        const fallbackSourceIndex = sources.findIndex((source) => source.mirrorId === mirror.id);
+        const nextSourceIndex = sourceIndex >= 0 ? sourceIndex : fallbackSourceIndex;
+        if (nextSourceIndex < 0) return;
+        attempt = 0;
+        consecutiveSourceFailures = 0;
+        mediaRecoveryAttempts = 0;
+        softRecoveryFailures = 0;
+        activeSourceIndex = nextSourceIndex;
+        void attachSource(activeSourceIndex, "Mirror selected.");
+      },
+      switchProtocol: (protocol: StreamProtocol) => {
+        const currentSource = sources[activeSourceIndex] ?? sources[0];
+        const sourceIndex = sources.findIndex((source) => source.mirrorId === currentSource.mirrorId && source.protocol === protocol);
+        if (sourceIndex < 0 || sourceIndex === activeSourceIndex) return;
         attempt = 0;
         consecutiveSourceFailures = 0;
         mediaRecoveryAttempts = 0;
         softRecoveryFailures = 0;
         activeSourceIndex = sourceIndex;
-        void attachSource(activeSourceIndex, "Mirror selected.");
+        void attachSource(activeSourceIndex, `${protocol.toUpperCase()} selected.`);
       }
     };
 
@@ -732,6 +793,7 @@ export function useLiveHls(
     hardReconnect: useCallback(() => actionsRef.current.hardReconnect(), []),
     enableAudio: useCallback(() => actionsRef.current.enableAudio(), []),
     seekToLive: useCallback(() => actionsRef.current.seekToLive(), []),
-    switchMirror: useCallback((index: number) => actionsRef.current.switchMirror(index), [])
+    switchMirror: useCallback((index: number) => actionsRef.current.switchMirror(index), []),
+    switchProtocol: useCallback((protocol: StreamProtocol) => actionsRef.current.switchProtocol(protocol), [])
   };
 }

@@ -49,7 +49,7 @@ type WebKitFullscreenVideo = HTMLVideoElement & {
 };
 
 type PlayerIconName = "play" | "pause" | "volume" | "muted" | "settings" | "pip" | "fullscreen" | "retry" | "cast";
-type OpenDropdown = "theme" | "mirror" | null;
+type OpenDropdown = "theme" | "mirror" | "protocol" | null;
 type AutoMode = "primary" | "public" | "configured" | "custom";
 type SourceTone = "green" | "yellow" | "red";
 
@@ -527,7 +527,7 @@ export default function App() {
     }),
     []
   );
-  const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror } =
+  const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror, switchProtocol } =
     useLiveHls(videoRef, streamConfig.mirrors, playerOptions);
   const overlayActive = Boolean(customSrc);
   const activeSourceId = overlaySource?.id ?? "server-1";
@@ -2070,6 +2070,44 @@ export default function App() {
                           >
                             <span>{mirror.label}</span>
                             <small>{mirror.host}</small>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="menu-field custom-select protocol-select-control" data-custom-select>
+                    <span className="custom-select-label">Protocol</span>
+                    <button
+                      className="custom-select-trigger"
+                      type="button"
+                      aria-label="Protocol"
+                      aria-haspopup="listbox"
+                      aria-expanded={openDropdown === "protocol"}
+                      disabled={overlayActive}
+                      onClick={() => {
+                        setOpenDropdown((current) => (current === "protocol" ? null : "protocol"));
+                      }}
+                    >
+                      <span>{activeSource.protocol.toUpperCase()}</span>
+                      <span className="custom-select-chevron" aria-hidden="true" />
+                    </button>
+                    {openDropdown === "protocol" ? (
+                      <div className="custom-select-menu mirror-menu" role="listbox" aria-label="Protocol">
+                        {(["dash", "hls"] as const).map((protocol) => (
+                          <button
+                            className={protocol === activeSource.protocol ? "custom-select-option selected" : "custom-select-option"}
+                            type="button"
+                            role="option"
+                            aria-selected={protocol === activeSource.protocol}
+                            key={protocol}
+                            onClick={() => {
+                              switchProtocol(protocol);
+                              setOpenDropdown(null);
+                            }}
+                          >
+                            <span>{protocol.toUpperCase()}</span>
+                            <small>{protocol === "dash" ? "Shaka MPEG-DASH" : "HLS native/hls.js"}</small>
                           </button>
                         ))}
                       </div>
