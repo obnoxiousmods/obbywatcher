@@ -88,7 +88,7 @@ export function formatEventTime(iso: string, locale = undefined as string | unde
 }
 
 export function eventStartMs(event: UfcEvent) {
-  const firstSlot = event.slots[0]?.iso ?? event.mainCardIso;
+  const firstSlot = event.slots[0]?.iso ?? event.mainCardIso ?? event.dateIso;
   return firstSlot ? Date.parse(firstSlot) : Number.POSITIVE_INFINITY;
 }
 
@@ -99,9 +99,10 @@ export function eventEndMs(event: UfcEvent) {
 }
 
 export function getEventPhase(event: UfcEvent, nowMs = Date.now()) {
-  const startMs = eventStartMs(event);
+  const firstKnownStreamSlot = event.slots[0]?.iso ?? event.mainCardIso;
+  if (!firstKnownStreamSlot) return "TBA";
+  const startMs = Date.parse(firstKnownStreamSlot);
   const endMs = eventEndMs(event);
-  if (!Number.isFinite(startMs)) return "TBA";
   if (nowMs >= startMs && nowMs <= endMs) return "Now";
   if (nowMs < startMs) return "Next";
   return "Replay";

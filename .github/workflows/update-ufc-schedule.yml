@@ -1,0 +1,37 @@
+name: Update UFC schedule
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 15 * * 1,4"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run update:schedule
+      - run: npm test
+      - run: npm run build
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          branch: codex/update-ufc-schedule
+          delete-branch: true
+          commit-message: Update UFC schedule seed
+          title: Update UFC schedule seed
+          body: |
+            Automated UFC schedule refresh from the Paramount+ public schedule page.
+
+            This keeps the fight.nswfiles.com viewer schedule seeded without requiring manual TypeScript edits.

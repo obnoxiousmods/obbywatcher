@@ -8,6 +8,7 @@ export type UfcEvent = {
   title: string;
   shortTitle: string;
   dateLabel: string;
+  dateIso?: string;
   venue: string;
   city: string;
   stream: string;
@@ -17,114 +18,126 @@ export type UfcEvent = {
   note?: string;
 };
 
-export const ufcScheduleLastChecked = "2026-06-15";
+export const ufcScheduleLastChecked = "2026-06-21";
 
 export const ufcSchedule: UfcEvent[] = [
   {
-    id: "ufc-fn-burns-malott",
-    title: "UFC Fight Night: Burns vs. Malott",
-    shortTitle: "Burns vs. Malott",
-    dateLabel: "Saturday, April 18",
-    venue: "Canada Life Centre",
-    city: "Winnipeg, Canada",
-    stream: "Paramount+",
-    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-april-18-2026",
-    mainCardIso: "2026-04-19T00:00:00Z",
-    slots: [
-      { label: "Prelims", iso: "2026-04-18T21:00:00Z" },
-      { label: "Main card", iso: "2026-04-19T00:00:00Z" }
-    ]
-  },
-  {
-    id: "ufc-fn-sterling-zalal",
-    title: "UFC Fight Night: Sterling vs. Zalal",
-    shortTitle: "Sterling vs. Zalal",
-    dateLabel: "Saturday, April 25",
+    id: "ufc-fn-kape-vs-horiguchi",
+    title: "UFC Fight Night: Kape vs Horiguchi",
+    shortTitle: "Kape vs Horiguchi",
+    dateLabel: "Saturday, June 20",
+    dateIso: "2026-06-20T12:00:00.000Z",
     venue: "Meta APEX",
     city: "Las Vegas, Nevada",
     stream: "Paramount+",
-    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-april-25-2026",
-    mainCardIso: "2026-04-26T00:00:00Z",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-june-20-2026",
+    mainCardIso: "2026-06-21T00:00:00.000Z",
     slots: [
-      { label: "Prelims", iso: "2026-04-25T21:00:00Z" },
-      { label: "Main card", iso: "2026-04-26T00:00:00Z" }
+      { label: "Prelims", iso: "2026-06-20T21:00:00.000Z" },
+      { label: "Main card", iso: "2026-06-21T00:00:00.000Z" }
     ]
   },
   {
-    id: "ufc-fn-della-prates",
-    title: "UFC Fight Night: Della Maddalena vs. Prates",
-    shortTitle: "Della Maddalena vs. Prates",
-    dateLabel: "Saturday, May 2",
-    venue: "RAC Arena",
-    city: "Perth, Australia",
+    id: "ufc-fn-fiziev-vs-torres",
+    title: "UFC Fight Night: Fiziev vs Torres",
+    shortTitle: "Fiziev vs Torres",
+    dateLabel: "Saturday, June 27",
+    dateIso: "2026-06-27T12:00:00.000Z",
+    venue: "National Gymnastics Arena",
+    city: "Baku, Azerbaijan",
     stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/ufc-schedule-2026/",
-    mainCardIso: "2026-05-02T11:00:00Z",
-    slots: [{ label: "Main card", iso: "2026-05-02T11:00:00Z" }]
-  },
-  {
-    id: "ufc-328",
-    title: "UFC 328: Chimaev vs. Strickland",
-    shortTitle: "Chimaev vs. Strickland",
-    dateLabel: "Saturday, May 9",
-    venue: "Prudential Center",
-    city: "Newark, New Jersey",
-    stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/ufc-schedule-2026/",
-    mainCardIso: "2026-05-10T01:00:00Z",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-june-27-2026",
+    mainCardIso: "2026-06-27T16:00:00.000Z",
     slots: [
-      { label: "Early prelims", iso: "2026-05-09T21:00:00Z" },
-      { label: "Prelims", iso: "2026-05-09T23:00:00Z" },
-      { label: "Main card", iso: "2026-05-10T01:00:00Z" }
+      { label: "Main card", iso: "2026-06-27T16:00:00.000Z" }
     ]
   },
   {
-    id: "ufc-fn-allen-costa",
-    title: "UFC Fight Night: Allen vs. Costa",
-    shortTitle: "Allen vs. Costa",
-    dateLabel: "Saturday, May 16",
-    venue: "Meta APEX",
+    id: "ufc-329",
+    title: "UFC 329: McGregor vs. Holloway 2",
+    shortTitle: "McGregor vs. Holloway 2",
+    dateLabel: "Saturday, July 11",
+    dateIso: "2026-07-11T12:00:00.000Z",
+    venue: "T-Mobile Arena",
     city: "Las Vegas, Nevada",
     stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/ufc-schedule-2026/",
-    mainCardIso: "2026-05-17T00:00:00Z",
-    slots: [{ label: "Main card", iso: "2026-05-17T00:00:00Z" }]
+    sourceUrl: "https://www.ufc.com/event/ufc-329",
+    mainCardIso: "2026-07-12T01:00:00.000Z",
+    slots: [
+      { label: "Main card", iso: "2026-07-12T01:00:00.000Z" }
+    ]
   },
   {
-    id: "ufc-fn-song-figueiredo",
-    title: "UFC Fight Night: Song vs. Figueiredo",
-    shortTitle: "Song vs. Figueiredo",
-    dateLabel: "Saturday, May 30",
-    venue: "Galaxy Arena",
-    city: "Macau, China",
+    id: "ufc-fn-2026-07-18",
+    title: "UFC Fight Night: TBD vs. TBD",
+    shortTitle: "TBD vs. TBD",
+    dateLabel: "Saturday, July 18",
+    dateIso: "2026-07-18T12:00:00.000Z",
+    venue: "Paycom Center",
+    city: "Oklahoma City, Oklahoma",
     stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/ufc-schedule-2026/",
-    mainCardIso: "2026-05-30T11:00:00Z",
-    slots: [{ label: "Main card", iso: "2026-05-30T11:00:00Z" }]
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-july-18-2026",
+    mainCardIso: "2026-07-19T00:00:00.000Z",
+    slots: [
+      { label: "Main card", iso: "2026-07-19T00:00:00.000Z" }
+    ]
   },
   {
-    id: "ufc-fn-muhammad-bonfim",
-    title: "UFC Fight Night: Muhammad vs. Bonfim",
-    shortTitle: "Muhammad vs. Bonfim",
-    dateLabel: "Saturday, June 6",
-    venue: "Meta APEX",
-    city: "Las Vegas, Nevada",
+    id: "ufc-fn-ankalaev-vs-rountree-jr",
+    title: "UFC Fight Night: Ankalaev vs. Rountree Jr.",
+    shortTitle: "Ankalaev vs. Rountree Jr.",
+    dateLabel: "Saturday, July 25",
+    dateIso: "2026-07-25T12:00:00.000Z",
+    venue: "Etihad Arena",
+    city: "Abu Dhabi, United Arab Emirates",
     stream: "Paramount+",
-    sourceUrl: "https://www.paramountplus.com/sneak-peak/ufc-schedule-2026/",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-july-25-2026",
+    mainCardIso: "2026-07-25T16:00:00.000Z",
+    slots: [
+      { label: "Main card", iso: "2026-07-25T16:00:00.000Z" }
+    ]
+  },
+  {
+    id: "ufc-fn-medic-vs-rodriguez",
+    title: "UFC Fight Night: Medic vs Rodriguez",
+    shortTitle: "Medic vs Rodriguez",
+    dateLabel: "Saturday, August 1",
+    dateIso: "2026-08-01T12:00:00.000Z",
+    venue: "Belgrade Arena",
+    city: "Belgrade, Serbia",
+    stream: "Paramount+",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-august-01-2026",
+    mainCardIso: "2026-08-01T18:00:00.000Z",
+    slots: [
+      { label: "Main card", iso: "2026-08-01T18:00:00.000Z" }
+    ]
+  },
+  {
+    id: "ufc-330",
+    title: "UFC 330: Makhachev vs. Machado Garry",
+    shortTitle: "Makhachev vs. Machado Garry",
+    dateLabel: "Saturday, August 15",
+    dateIso: "2026-08-15T12:00:00.000Z",
+    venue: "Xfinity Mobile Arena",
+    city: "Philadelphia, Pennsylvania",
+    stream: "Paramount+",
+    sourceUrl: "https://www.ufc.com/event/ufc-330",
     mainCardIso: null,
     slots: [],
     note: "Start time TBA"
   },
   {
-    id: "ufc-freedom-250",
-    title: "UFC Freedom 250: Topuria vs. Gaethje",
-    shortTitle: "Topuria vs. Gaethje",
-    dateLabel: "Sunday, June 14",
-    venue: "The White House South Lawn",
-    city: "Washington, D.C.",
+    id: "ufc-fn-2026-09-05",
+    title: "UFC Fight Night: TBD vs. TBD",
+    shortTitle: "TBD vs. TBD",
+    dateLabel: "Saturday, September 5",
+    dateIso: "2026-09-05T12:00:00.000Z",
+    venue: "Accor Arena",
+    city: "Paris, France",
     stream: "Paramount+",
-    sourceUrl: "https://www.ufc.com/event/ufc-freedom-250",
-    mainCardIso: "2026-06-15T00:00:00Z",
-    slots: [{ label: "Main card", iso: "2026-06-15T00:00:00Z" }]
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-september-05-2026",
+    mainCardIso: null,
+    slots: [],
+    note: "Start time TBA"
   }
 ];

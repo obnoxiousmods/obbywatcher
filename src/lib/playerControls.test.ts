@@ -27,15 +27,26 @@ describe("player controls", () => {
 
 describe("UFC schedule helpers", () => {
   it("detects a live event window", () => {
-    expect(getEventPhase(ufcSchedule[0], Date.parse("2026-04-18T22:00:00Z"))).toBe("Now");
-    expect(getEventPhase(ufcSchedule[1], Date.parse("2026-04-18T22:00:00Z"))).toBe("Next");
+    expect(getEventPhase(ufcSchedule[0], Date.parse("2026-06-20T22:00:00Z"))).toBe("Now");
+    expect(getEventPhase(ufcSchedule[1], Date.parse("2026-06-20T22:00:00Z"))).toBe("Next");
   });
 
   it("returns current and upcoming events", () => {
-    const buckets = getScheduleBuckets(ufcSchedule, Date.parse("2026-04-18T22:00:00Z"));
+    const buckets = getScheduleBuckets(ufcSchedule, Date.parse("2026-06-20T22:00:00Z"));
 
-    expect(buckets.current?.id).toBe("ufc-fn-burns-malott");
-    expect(buckets.next?.id).toBe("ufc-fn-sterling-zalal");
+    expect(buckets.current?.id).toBe("ufc-fn-kape-vs-horiguchi");
+    expect(buckets.next?.id).toBe("ufc-fn-fiziev-vs-torres");
     expect(buckets.upcoming.length).toBeGreaterThan(2);
+  });
+
+  it("keeps generated schedule ids unique and TBA events date-sortable", () => {
+    const ids = new Set(ufcSchedule.map((event) => event.id));
+    const tbaEvents = ufcSchedule.filter((event) => event.slots.length === 0);
+
+    expect(ids.size).toBe(ufcSchedule.length);
+    expect(tbaEvents.length).toBeGreaterThan(0);
+    expect(tbaEvents.every((event) => event.dateIso && getEventPhase(event, Date.parse("2026-06-20T22:00:00Z")) === "TBA")).toBe(
+      true
+    );
   });
 });

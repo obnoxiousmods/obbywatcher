@@ -26,6 +26,8 @@ transcoder.
 - Discord links in navigation and utility areas.
 - UFC schedule panel, source links, command copy helpers for VLC/MPV, and
   embedded or pop-out chat.
+- Seeded UFC schedule from the public Paramount+ schedule page, with a local
+  updater and scheduled GitHub workflow to keep event rows current.
 - Static deployment compatible with the current nginx root at
   `/var/www/live.obnoxious.lol`.
 
@@ -39,6 +41,7 @@ npm run dev
 ## Checks
 
 ```sh
+npm run update:schedule
 npm test
 npm run build
 ```
@@ -70,6 +73,23 @@ The player keeps official Server 1 and public pasted sources visually separate.
 If the active public source becomes fatal, stalls, or buffers out for the
 watchdog window, ObbyWatcher switches to the next public source, then returns
 to Server 1 when appropriate.
+
+## UFC Schedule
+
+The fight schedule rendered on `fight.nswfiles.com` is seeded in
+`src/config/ufcSchedule.ts`. Regenerate it with:
+
+```sh
+npm run update:schedule
+```
+
+The updater fetches the Paramount+ UFC schedule page, parses upcoming events,
+converts listed ET/PT start times to UTC, and falls back to the checked-in seed
+if the upstream page format changes. TBA cards keep a `dateIso` for sort order
+while still rendering as TBA until a real stream slot is published.
+
+GitHub Actions runs `.github/workflows/update-ufc-schedule.yml` every Monday
+and Thursday and opens a pull request when the generated schedule changes.
 
 ## Deployment
 
