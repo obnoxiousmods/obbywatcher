@@ -148,7 +148,7 @@ test("renders cockpit-managed stream news", async ({ page }) => {
             pinned: true,
             visible: true,
             updated_at: Date.UTC(2026, 5, 20, 23, 0),
-            link_url: "https://discord.gg/fJCUPDKej5",
+            link_url: "https://discord.gg/moddingcartel",
             link_label: "Discord"
           }
         ],
@@ -167,7 +167,7 @@ test("renders cockpit-managed stream news", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Stream news" })).toBeVisible();
   await expect(news.getByText("Main card live")).toBeVisible();
   await expect(news.getByText("Server 1 is primary. Public backups are available below.")).toBeVisible();
-  await expect(news.getByRole("link", { name: "Discord" })).toHaveAttribute("href", "https://discord.gg/fJCUPDKej5");
+  await expect(news.getByRole("link", { name: "Discord" })).toHaveAttribute("href", "https://discord.gg/moddingcartel");
 });
 
 test("theme picker applies pastel themes", async ({ page }) => {

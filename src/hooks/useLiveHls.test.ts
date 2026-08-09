@@ -32,9 +32,12 @@ describe("stable HLS config", () => {
     expect(config.liveMaxLatencyDurationCount).toBe(8);
     expect(config.maxLiveSyncPlaybackRate).toBe(1.1);
     expect(config.maxBufferLength).toBeGreaterThanOrEqual(60);
-    expect(config.manifestLoadingMaxRetry).toBeLessThanOrEqual(1);
-    expect(config.levelLoadingMaxRetry).toBeLessThanOrEqual(1);
-    expect(config.fragLoadingMaxRetry).toBeLessThanOrEqual(1);
+    expect(config.manifestLoadingTimeOut).toBeLessThanOrEqual(5_000);
+    expect(config.manifestLoadingMaxRetry).toBe(0);
+    expect(config.levelLoadingTimeOut).toBeLessThanOrEqual(5_000);
+    expect(config.levelLoadingMaxRetry).toBe(0);
+    expect(config.fragLoadingTimeOut).toBeLessThanOrEqual(7_000);
+    expect(config.fragLoadingMaxRetry).toBe(0);
   });
 });
 

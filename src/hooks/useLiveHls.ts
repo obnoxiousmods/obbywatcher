@@ -66,6 +66,10 @@ export type LiveHlsSnapshot = {
 };
 
 export type LiveHlsOptions = {
+  /** When false, the managed pipeline is fully suspended (no play/reconnect) so a
+   *  public/custom source can own playback without the managed stream recovering
+   *  and playing behind it (double-audio bug). */
+  active?: boolean;
   autoPlay?: boolean;
   forceAutoplayAudio?: boolean;
   backoffBaseMs?: number;
@@ -93,17 +97,18 @@ export type LiveHlsController = {
 };
 
 const defaultOptions: Required<LiveHlsOptions> = {
+  active: true,
   autoPlay: true,
   forceAutoplayAudio: true,
-  backoffBaseMs: 500,
-  backoffMaxMs: 30_000,
+  backoffBaseMs: 300,
+  backoffMaxMs: 8_000,
   jitterRatio: 0.22,
   healthIntervalMs: 1_000,
-  staleTargetDurations: 4,
-  stallTimeoutMs: 8_000,
+  staleTargetDurations: 3,
+  stallTimeoutMs: 5_000,
   mirrorFailureThreshold: 2,
   softRecoveryFailureThreshold: 1,
-  probeTimeoutMs: 3_500
+  probeTimeoutMs: 1_500
 };
 
 const emptySource: StreamSource = {
@@ -281,12 +286,12 @@ export function createStableHlsConfig(): Partial<HlsConfig> {
     backBufferLength: 90,
     maxBufferLength: 60,
     maxBufferHole: 0.5,
-    manifestLoadingTimeOut: 8_000,
-    manifestLoadingMaxRetry: 1,
-    levelLoadingTimeOut: 8_000,
-    levelLoadingMaxRetry: 1,
-    fragLoadingTimeOut: 12_000,
-    fragLoadingMaxRetry: 1
+    manifestLoadingTimeOut: 5_000,
+    manifestLoadingMaxRetry: 0,
+    levelLoadingTimeOut: 5_000,
+    levelLoadingMaxRetry: 0,
+    fragLoadingTimeOut: 7_000,
+    fragLoadingMaxRetry: 0
   };
 }
 
@@ -312,6 +317,13 @@ export function useLiveHls(
     const media = videoRef.current;
     if (!media || mirrors.length === 0) return undefined;
     const video: HTMLVideoElement = media;
+    if (!opts.active) {
+      // Suspended: a public/custom source owns playback. Stop the managed element
+      // and set up no hls/reconnect/health loops, so it cannot recover and replay
+      // behind the active source (the double-audio bug).
+      video.pause();
+      return undefined;
+    }
     const sources = orderedSources(mirrors, video);
     if (sources.length === 0) return undefined;
 
@@ -319,6 +331,7 @@ export function useLiveHls(
     let hls: Hls | null = null;
     let shakaPlayer: shaka.Player | null = null;
     let reconnectTimer: number | null = null;
+    let reconnectPending = false;
     let healthTimer: number | null = null;
     let stableTimer: number | null = null;
     let probeRun = 0;
@@ -397,7 +410,7 @@ export function useLiveHls(
         mediaRecoveryAttempts = 0;
         softRecoveryFailures = 0;
         publish({ attempt: 0, lastError: null, lastFallbackReason: null, nextRetryAtMs: null });
-      }, 12_000);
+      }, 5_000);
     };
     const maybePlay = async () => {
       if (!opts.autoPlay) return;
@@ -563,6 +576,8 @@ export function useLiveHls(
 
     async function attachSource(index: number, reason: string) {
       clearTimer(reconnectTimer);
+      reconnectTimer = null;
+      reconnectPending = true;
       activeSourceIndex = index;
       const source = sources[activeSourceIndex] ?? sources[0];
       const url = sourceWithCacheBust(source.url, `${Date.now()}-${attempt}`);
@@ -582,28 +597,39 @@ export function useLiveHls(
         autoplayBlocked: false
       });
       await resetMediaElement();
-      if (!mounted) return;
+      if (!mounted) {
+        reconnectPending = false;
+        return;
+      }
       if (source.protocol === "dash" && canUseDash()) {
+        reconnectPending = false;
         await attachDashSource(url);
         return;
       }
       if (source.protocol === "hls" && Hls.isSupported()) {
+        reconnectPending = false;
         attachHlsSource(source, url);
         return;
       }
       if (source.protocol === "hls" && canUseNativeHls(video)) {
+        reconnectPending = false;
         attachNativeSource(source, url);
         return;
       }
+      reconnectPending = false;
       scheduleReconnect(`Unsupported ${source.protocol.toUpperCase()} engine`, true);
     }
 
     function scheduleReconnect(reason: string, rotateSource = false) {
-      clearTimer(reconnectTimer);
+      // hls.js and Shaka can emit a burst of errors for one outage. Coalesce
+      // them into one recovery attempt so they cannot keep restarting the timer
+      // and inflating the exponential backoff.
+      if (reconnectPending) return;
       if (!navigator.onLine) {
         publish({ status: "offline", lastError: "Browser is offline.", nextRetryAtMs: null });
         return;
       }
+      reconnectPending = true;
       const rotate =
         rotateSource || shouldRotateMirror(consecutiveSourceFailures, sources.length, opts.mirrorFailureThreshold);
       if (rotate) {
@@ -616,8 +642,11 @@ export function useLiveHls(
       const nextRetryAtMs = Date.now() + delayMs;
       publish({ status: "reconnecting", lastError: reason, lastFallbackReason: reason, nextRetryAtMs });
       reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
         void (async () => {
-          const freshest = sources.length > 1 ? await probeFreshSource() : null;
+          // A same-source restart should be nearly immediate. Probe all routes
+          // only when recovery has escalated to a source rotation.
+          const freshest = rotate && sources.length > 1 ? await probeFreshSource() : null;
           if (!mounted) return;
           await attachSource(freshest?.mirrorIndex ?? activeSourceIndex, reason);
         })();
@@ -679,6 +708,8 @@ export function useLiveHls(
     };
     const onOffline = () => {
       clearTimer(reconnectTimer);
+      reconnectTimer = null;
+      reconnectPending = false;
       publish({ status: "offline", isOnline: false, lastError: "Browser is offline.", nextRetryAtMs: null });
     };
     const onVisibilityChange = () => {

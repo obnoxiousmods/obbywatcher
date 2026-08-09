@@ -43,7 +43,7 @@ export const streamConfig = {
   schedule: "Live fight nights & PPVs",
   canonicalUrl: "https://fight.nswfiles.com/",
   chatUrl: "https://chat.obnoxious.lol/",
-  discordUrl: "https://discord.gg/fJCUPDKej5",
+  discordUrl: "https://discord.gg/moddingcartel",
   twitterUrl: "https://twitter.com/obnoxiousMods",
   ircUrl: "irc://irc.obnoxious.lol:6666",
   githubUrl: "https://github.com/obnoxiousmods/obbywatcher",
@@ -71,7 +71,7 @@ export const streamConfig = {
     },
     {
       label: "Discord",
-      href: "https://discord.gg/fJCUPDKej5",
+      href: "https://discord.gg/moddingcartel",
       description: "Community updates and stream help"
     },
     {

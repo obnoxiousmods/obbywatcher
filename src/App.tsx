@@ -5,9 +5,9 @@ import { streamConfig } from "./config/stream";
 import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
 import type { ThemeId } from "./config/themes";
 import { ufcSchedule, ufcScheduleLastChecked } from "./config/ufcSchedule";
-import { useLiveHls } from "./hooks/useLiveHls";
+import { createStableHlsConfig, useLiveHls } from "./hooks/useLiveHls";
 import type { LivePlaybackStatus } from "./hooks/useLiveHls";
-import { parseHlsManifest } from "./lib/reconnect";
+import { parseHlsManifest, sourceWithCacheBust } from "./lib/reconnect";
 import {
   decideAutoFallback,
   nextFailureRecord,
@@ -503,6 +503,16 @@ export default function App() {
   const [configuredSourceId, setConfiguredSourceId] = useState<string | null>(null);
   const [viewerCounts, setViewerCounts] = useState<ViewerCounts | null>(null);
   const [watcherNews, setWatcherNews] = useState<WatcherNewsEntry[]>([]);
+  type HighscoreEntry = { rank: number; codename: string; ip_masked: string; watch_seconds: number; favorite_source: string | null; flag: string; location: string; country: string };
+  type SourcePerf = { source_id: string; label?: string; watch_hours: number; smoothness: number; buffering_minutes: number; stalls: number; viewers: number };
+  type HighscoreData = { leaderboard: HighscoreEntry[]; top_countries: { country: string; flag: string; watch_hours: number; viewers: number }[]; top_sources: { source_id: string; watch_hours: number }[]; source_performance: SourcePerf[]; best_sources: SourcePerf[]; viewers_tracked: number; total_watch_hours: number };
+  const prettySource = (id: string) => id.replace(/^private-iptv-/, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const [highscores, setHighscores] = useState<HighscoreData | null>(null);
+  const formatWatch = (seconds: number) => {
+    if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+    if (seconds >= 60) return `${Math.floor(seconds / 60)}m`;
+    return `${seconds}s`;
+  };
   const [overlaySource, setOverlaySource] = useState<OverlaySource | null>(null);
   const [autoMode, setAutoMode] = useState<AutoMode>("primary");
   const primaryBadSince = useRef<number | null>(null);
@@ -533,14 +543,19 @@ export default function App() {
   const lastPlayerSurfaceClick = useRef<{ time: number; x: number; y: number } | null>(null);
   const lastFullscreenToggleAt = useRef(0);
   const customReloadNonce = useRef(0);
+  const overlayReconnectAttempts = useRef(0);
+  const overlayPlaybackIdentity = useRef<string | null>(null);
   const playerNoticeTimer = useRef<number | null>(null);
 
   const playerOptions = useMemo(
     () => ({
+      // Suspend the managed pipeline whenever a public/custom source is active so it
+      // can't auto-recover and play behind the overlay (double audio).
+      active: !customSrc,
       autoPlay: true,
       forceAutoplayAudio: true
     }),
-    []
+    [customSrc]
   );
   const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror, switchProtocol } =
     useLiveHls(videoRef, streamConfig.mirrors, playerOptions);
@@ -560,6 +575,22 @@ export default function App() {
     snapshot.status === "connecting" ||
     snapshot.status === "reconnecting";
   const activePlayerBusy = overlayActive ? customPlayerBusy : playerBusy;
+  // QoE: accumulate buffering/stall time so the heartbeat can report per-source
+  // playback quality (used server-side to rank best-performing sources).
+  const bufferAccumMsRef = useRef(0);
+  const bufferStartRef = useRef<number | null>(null);
+  const stallCountRef = useRef(0);
+  useEffect(() => {
+    if (activePlayerBusy) {
+      if (bufferStartRef.current == null) {
+        bufferStartRef.current = Date.now();
+        stallCountRef.current += 1;
+      }
+    } else if (bufferStartRef.current != null) {
+      bufferAccumMsRef.current += Date.now() - bufferStartRef.current;
+      bufferStartRef.current = null;
+    }
+  }, [activePlayerBusy]);
   const customVideoMetrics = useOverlayVideoMetrics(customVideoRef, overlayActive);
   const customLiveLatencySeconds = overlayActive ? customVideoMetrics.liveLatencySeconds : null;
   const customBufferAheadSeconds = overlayActive ? customVideoMetrics.bufferAheadSeconds : 0;
@@ -753,7 +784,24 @@ export default function App() {
   useEffect(() => {
     const video = customVideoRef.current;
     publicProgressRef.current = { timeMs: Date.now(), currentTime: 0, bufferedAhead: 0, readyState: 0 };
-    overlayFatalSince.current = null;
+
+    const playbackIdentity = customSrc
+      ? (() => {
+          try {
+            const url = new URL(customSrc, OBBY_COCKPIT);
+            url.searchParams.delete("ow");
+            url.searchParams.delete("owr");
+            return url.toString();
+          } catch {
+            return customSrc;
+          }
+        })()
+      : null;
+    if (overlayPlaybackIdentity.current !== playbackIdentity) {
+      overlayPlaybackIdentity.current = playbackIdentity;
+      overlayReconnectAttempts.current = 0;
+      overlayFatalSince.current = null;
+    }
 
     // Destroy previous instance
     if (customHlsRef.current) {
@@ -774,14 +822,23 @@ export default function App() {
     setCustomPlayerBusy(true);
 
     const markBusy = () => setCustomPlayerBusy(true);
+    let reconnectTimer: number | null = null;
     const markReady = () => {
       overlayFatalSince.current = null;
+      overlayReconnectAttempts.current = 0;
       setCustomPlayerBusy(false);
     };
     const markFatal = () => {
-      overlayFatalSince.current = Date.now();
+      if (overlayFatalSince.current === null) overlayFatalSince.current = Date.now();
       publicProgressRef.current.timeMs = Date.now() - 8_000;
       setCustomPlayerBusy(true);
+      if (reconnectTimer === null && overlayReconnectAttempts.current < 2) {
+        const attempt = (overlayReconnectAttempts.current += 1);
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          setCustomSrc((current) => current ? sourceWithCacheBust(current, `overlay-${Date.now()}-${attempt}`) : current);
+        }, attempt === 1 ? 300 : 800);
+      }
     };
     video.addEventListener("waiting", markBusy);
     video.addEventListener("stalled", markBusy);
@@ -793,11 +850,7 @@ export default function App() {
     video.addEventListener("seeked", markReady);
 
     if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 30,
-      });
+      const hls = new Hls({ ...createStableHlsConfig(), enableWorker: true, backBufferLength: 30 });
       customHlsRef.current = hls;
       hls.loadSource(customSrc);
       hls.attachMedia(video);
@@ -820,6 +873,7 @@ export default function App() {
     }
 
     return () => {
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       video.removeEventListener("waiting", markBusy);
       video.removeEventListener("stalled", markBusy);
       video.removeEventListener("seeking", markBusy);
@@ -1001,6 +1055,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    async function fetchHighscores() {
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/highscores?limit=15`, { cache: "no-store" });
+        const data = await resp.json();
+        if (!cancelled && data.ok) setHighscores(data as HighscoreData);
+      } catch {
+        // Highscores are advisory; never block playback on them.
+      }
+    }
+    void fetchHighscores();
+    const interval = window.setInterval(fetchHighscores, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof EventSource === "undefined") return undefined;
     const events = new EventSource(`${OBBY_COCKPIT}/api/live`);
     events.addEventListener("status", (event) => {
@@ -1036,6 +1109,15 @@ export default function App() {
     let cancelled = false;
     async function heartbeat() {
       if (cancelled || !sessionId) return;
+      let bufferingMs = bufferAccumMsRef.current;
+      if (bufferStartRef.current != null) {
+        const nowTs = Date.now();
+        bufferingMs += nowTs - bufferStartRef.current;
+        bufferStartRef.current = nowTs; // keep counting an in-progress stall
+      }
+      bufferAccumMsRef.current = 0;
+      const stalls = stallCountRef.current;
+      stallCountRef.current = 0;
       try {
         const resp = await fetch(`${OBBY_COCKPIT}/api/viewers`, {
           method: "POST",
@@ -1045,7 +1127,9 @@ export default function App() {
             source_id: activeSourceId,
             source_label: activeSourceLabel,
             page: window.location.href,
-            playback: customSrc ? "overlay-hls" : activeSource.protocol
+            playback: customSrc ? "overlay-hls" : activeSource.protocol,
+            buffering_ms: Math.round(bufferingMs),
+            stalls
           })
         });
         const data = await resp.json() as { ok: boolean; viewers?: ViewerCounts };
@@ -1423,9 +1507,7 @@ export default function App() {
     const stamp = customReloadNonce.current;
     setCustomSrc((current) => {
       if (!current) return current;
-      const [base] = current.split("#", 1);
-      const joiner = base.includes("?") ? "&" : "?";
-      return `${base}${joiner}owr=${Date.now()}-${stamp}`;
+      return sourceWithCacheBust(current, `manual-${Date.now()}-${stamp}`);
     });
   }, [customSrc, retryNow]);
 
@@ -2403,6 +2485,58 @@ export default function App() {
 
           <p className="source-note">Schedule checked {ufcScheduleLastChecked}. Fight cards and times can change.</p>
         </section>
+
+        {highscores && highscores.leaderboard.length > 0 && (
+          <section className="highscore-panel" aria-label="Viewer highscores">
+            <div className="highscore-head">
+              <h2>🏆 Viewer Highscores</h2>
+              <span className="highscore-sub">
+                {highscores.viewers_tracked.toLocaleString()} watchers · {highscores.total_watch_hours}h watched
+              </span>
+            </div>
+            <ol className="highscore-list">
+              {highscores.leaderboard.map((viewer) => (
+                <li className={`highscore-row rank-${viewer.rank <= 3 ? viewer.rank : "n"}`} key={viewer.rank}>
+                  <span className="hs-rank">{viewer.rank <= 3 ? ["🥇", "🥈", "🥉"][viewer.rank - 1] : viewer.rank}</span>
+                  <span className="hs-flag" title={viewer.country}>{viewer.flag}</span>
+                  <span className="hs-name">
+                    <strong>{viewer.codename}</strong>
+                    <small>{viewer.location || viewer.ip_masked}</small>
+                  </span>
+                  <span className="hs-time">{formatWatch(viewer.watch_seconds)}</span>
+                </li>
+              ))}
+            </ol>
+            {highscores.top_countries.length > 0 && (
+              <div className="highscore-countries">
+                {highscores.top_countries.slice(0, 6).map((country) => (
+                  <span className="hs-country" key={country.country}>
+                    {country.flag} {country.country} <b>{country.watch_hours}h</b>
+                  </span>
+                ))}
+              </div>
+            )}
+            {highscores.source_performance && highscores.source_performance.length > 0 && (
+              <div className="perf-block">
+                <div className="perf-head">📡 Stream performance <small>most-watched · buffering-free</small></div>
+                <div className="perf-list">
+                  {highscores.source_performance.slice(0, 6).map((src) => {
+                    const tone = src.smoothness >= 97 ? "ok" : src.smoothness >= 90 ? "warn" : "bad";
+                    return (
+                      <div className={`perf-row perf-${tone}`} key={src.source_id}>
+                        <span className="perf-name" title={src.source_id}>{src.label || prettySource(src.source_id)}</span>
+                        <span className="perf-bar" aria-hidden="true"><i style={{ width: `${src.smoothness}%` }} /></span>
+                        <span className="perf-smooth">{src.smoothness}%</span>
+                        <span className="perf-meta">{formatWatch(Math.round(src.watch_hours * 3600))} · {src.viewers}👤{src.stalls > 0 ? ` · ${src.stalls} stalls` : ""}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <p className="source-note">Watchers are anonymised — codenames &amp; coarse location only, never full IPs. Stream quality is reported by viewers' players.</p>
+          </section>
+        )}
 
         <section className="utility-panel" aria-label="Stream tools and links">
           <div className="utility-group discord-group">

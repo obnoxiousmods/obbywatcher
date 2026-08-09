@@ -10,7 +10,7 @@ Current public integration:
 - Pasted public internet streams come from `https://s.obby.ca/api/public-streams`.
 - Live source/viewer updates come from `https://s.obby.ca/api/live`.
 - Viewer heartbeats go to `https://s.obby.ca/api/viewers`.
-- Discord URL is `https://discord.gg/fJCUPDKej5` and belongs in normal navigation/utility UI, not intrusive popups.
+- Discord URL is `https://discord.gg/moddingcartel` and belongs in normal navigation/utility UI, not intrusive popups.
 - UFC schedule rows live in `src/config/ufcSchedule.ts` and should be regenerated with `npm run update:schedule`.
 
 Keep user-facing source switching in this frontend. Keep official Server 1 and pasted public streams separate in the UI. Public streams must use the proxied `playback_url` from Obbystreams, not raw third-party HLS URLs. Obbystreams owns the exact public URLs and headers documented in `/home/joey/obbystreams/public_srcs.md`.
