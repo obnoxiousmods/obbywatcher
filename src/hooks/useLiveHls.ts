@@ -122,6 +122,12 @@ const defaultOptions: Required<LiveHlsOptions> = {
   attachGraceMs: 8_000
 };
 
+/** How many extra stall windows to grant while the origin is demonstrably
+ *  reachable. At stallTimeoutMs 8s that is ~32s of patience before a re-attach,
+ *  which comfortably covers an upstream hiccup or a source-side segment gap,
+ *  while still recovering a player that is genuinely wedged. */
+const ORIGIN_ALIVE_STALL_EXTENSIONS = 3;
+
 const emptySource: StreamSource = {
   id: "pending",
   mirrorId: "pending",
@@ -313,9 +319,13 @@ export function createStableHlsConfig(): Partial<HlsConfig> {
     manifestLoadingTimeOut: 5_000,
     manifestLoadingMaxRetry: 0,
     levelLoadingTimeOut: 5_000,
-    levelLoadingMaxRetry: 0,
+    levelLoadingMaxRetry: 2,
     fragLoadingTimeOut: 7_000,
-    fragLoadingMaxRetry: 0
+    // Shaka absorbs a rotated-out segment via retryParameters.maxAttempts and only
+    // escalates on CRITICAL. hls.js had no equivalent: with 0 retries every routine
+    // 404 counted toward softRecoveryFailureThreshold, so three of them -- normal
+    // on a live playlist with publish jitter -- destroyed the whole pipeline.
+    fragLoadingMaxRetry: 3
   };
 }
 
@@ -370,6 +380,11 @@ export function useLiveHls(
     let lastSegmentAtMs: number | null = null;
     let lastSequenceAtMs: number | null = null;
     let lastTimeUpdateAtMs = Date.now();
+    // Stall arbitration state. A frozen playhead alone does not justify tearing
+    // the pipeline down, so we ask the origin what it thinks before escalating.
+    let stallProbeInFlight = false;
+    let lastStallProbeSequence: number | null = null;
+    let originAliveStallExtensions = 0;
     let lastObservedTime = 0;
     let attachedAtMs = Date.now();
     let targetDurationSeconds = 4;
@@ -738,6 +753,83 @@ export function useLiveHls(
       }, delayMs);
     }
 
+    /**
+     * Decide what a frozen playhead actually means before rebuilding the pipeline.
+     *
+     * A re-attach costs the viewer a visible jump (resetMediaElement -> video.load()
+     * restarts at the live edge), so it is only worth paying when it can plausibly
+     * fix something. Ask the origin:
+     *
+     *  - probe fails            -> our route to the origin is broken. Rotate away.
+     *  - sequence went BACKWARD -> the encoder restarted; the manifest, init segment
+     *                              and availabilityStartTime are all new. Only a
+     *                              re-attach recovers this, so do it immediately
+     *                              rather than waiting out another stall timeout.
+     *  - sequence ADVANCED      -> the origin is publishing fine and we are merely
+     *                              behind. Rebuilding throws away the buffer and
+     *                              CAUSES the skip. Let the engine recover: Shaka
+     *                              re-reads the MPD every minimumUpdatePeriod (2s)
+     *                              and has liveSync/panicMode for exactly this.
+     *  - sequence UNCHANGED     -> the origin itself is stalled. A new pipeline hits
+     *                              the same missing data, so re-attaching cannot
+     *                              help either. Wait.
+     *
+     * The last two extend the stall window rather than ending it, bounded by
+     * ORIGIN_ALIVE_STALL_EXTENSIONS so a genuinely wedged player still recovers.
+     */
+    const confirmStallAgainstOrigin = async (bufferAheadSeconds: number) => {
+      if (stallProbeInFlight || reconnectPending) return;
+      stallProbeInFlight = true;
+      try {
+        const source = sources[activeSourceIndex] ?? sources[0];
+        if (!source) return;
+        const probe = await probeSource(source, activeSourceIndex, (probeRun += 1));
+        if (!mounted || reconnectPending) return;
+
+        if (!probe.ok) {
+          consecutiveSourceFailures += 1;
+          lastStallProbeSequence = null;
+          originAliveStallExtensions = 0;
+          scheduleReconnect(`Playback stalled and ${source.label} is unreachable.`);
+          return;
+        }
+
+        publish({ lastProbe: probeSnapshotFromResult(probe, sources) });
+        targetDurationSeconds = probe.targetDurationSeconds || targetDurationSeconds;
+        const sequence = probe.endSequence ?? probe.mediaSequence;
+        const previous = lastStallProbeSequence;
+        lastStallProbeSequence = sequence;
+
+        if (sequence !== null && previous !== null && sequence < previous) {
+          // The encoder restarted under us. Re-attach is the only cure.
+          originAliveStallExtensions = 0;
+          consecutiveSourceFailures = 0;
+          scheduleReconnect("Stream restarted at the source.");
+          return;
+        }
+
+        originAliveStallExtensions += 1;
+        if (originAliveStallExtensions > ORIGIN_ALIVE_STALL_EXTENSIONS) {
+          consecutiveSourceFailures += 1;
+          originAliveStallExtensions = 0;
+          lastStallProbeSequence = null;
+          scheduleReconnect("Playback stalled at the live edge.");
+          return;
+        }
+
+        // Give the engine another stall window to dig itself out.
+        lastTimeUpdateAtMs = Date.now();
+        lastObservedTime = video.currentTime;
+        publish({
+          status: "buffering",
+          bufferAheadSeconds,
+          lastError: null
+        });
+      } finally {
+        stallProbeInFlight = false;
+      }
+    };
+
     const runHealthCheck = () => {
       const now = Date.now();
       const bufferAheadSeconds = getBufferedAhead(video.buffered, video.currentTime);
@@ -765,6 +857,14 @@ export function useLiveHls(
           lastSequenceAtMs = now;
           lastSegmentAtMs = now;
         }
+        // hls.js reports the media sequence directly (LEVEL_UPDATED), so for HLS
+        // this is a real "the manifest froze" signal. Shaka exposes no equivalent,
+        // which is why the DASH branch above keeps the clock alive from playback
+        // instead -- for DASH the stall path below is the one that fires.
+        //
+        // Either way this now goes through the origin check rather than tearing
+        // down on the timer: a stale manifest is exactly the case where a rebuild
+        // re-fetches the same frozen playlist and skips the viewer for nothing.
         if (
           source.protocol !== "dash" &&
           isPlaylistStale({
@@ -774,8 +874,7 @@ export function useLiveHls(
             staleTargetDurations: opts.staleTargetDurations
           })
         ) {
-          consecutiveSourceFailures += 1;
-          scheduleReconnect("Manifest stopped advancing.");
+          void confirmStallAgainstOrigin(bufferAheadSeconds);
           return;
         }
         if (playheadMoved) {
@@ -790,8 +889,8 @@ export function useLiveHls(
             bufferAheadSeconds
           })
         ) {
-          consecutiveSourceFailures += 1;
-          scheduleReconnect("Playback stalled at the live edge.");
+          // Do not tear down on the timer alone -- see confirmStallAgainstOrigin.
+          void confirmStallAgainstOrigin(bufferAheadSeconds);
         }
       }
     };
@@ -801,6 +900,8 @@ export function useLiveHls(
       lastObservedTime = video.currentTime;
       mediaRecoveryAttempts = 0;
       softRecoveryFailures = 0;
+      originAliveStallExtensions = 0;
+      lastStallProbeSequence = null;
       lastSegmentAtMs = Date.now();
       publish({ status: "live", autoplayBlocked: false, lastError: null, nextRetryAtMs: null });
       markStableSoon();
@@ -846,11 +947,11 @@ export function useLiveHls(
         mediaRecoveryAttempts = 0;
         softRecoveryFailures = 0;
         recoveryCount += 1;
-        void (async () => {
-          await resetMediaElement();
-          if (!mounted) return;
-          await attachSource(activeSourceIndex, "Manual hard reconnect.");
-        })();
+        // attachSource does its own resetMediaElement under the reconnectPending
+        // guard. Doing one out here first let removeAttribute("src") + load() fire
+        // a media error that reached onVideoError and scheduled a competing
+        // reconnect, racing the attach this was supposed to perform.
+        void attachSource(activeSourceIndex, "Manual hard reconnect.");
       },
       enableAudio: async () => {
         video.muted = false;

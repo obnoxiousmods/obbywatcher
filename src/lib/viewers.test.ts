@@ -74,6 +74,37 @@ describe("qoeDelta", () => {
       { recoveryCount: 5, droppedFrames: 5, liveLatencySeconds: 0 },
       { recoveryCount: 5, droppedFrames: 5 }
     );
-    expect(report).toEqual({ reattaches: 0, dropped_frames: 0, live_latency_seconds: 0 });
+    expect(report).toEqual({
+      reattaches: 0,
+      dropped_frames: 0,
+      live_latency_seconds: 0,
+      last_error: null,
+      mirror_id: null
+    });
+  });
+
+  it("carries the last error and mirror so the server can tell re-attaches apart", () => {
+    const report = qoeDelta(
+      {
+        recoveryCount: 3,
+        droppedFrames: 0,
+        liveLatencySeconds: 8.24,
+        lastError: "  Playback stalled at the live edge.  ",
+        mirrorId: "fight"
+      },
+      { recoveryCount: 1, droppedFrames: 0 }
+    );
+    expect(report.reattaches).toBe(2);
+    expect(report.last_error).toBe("Playback stalled at the live edge.");
+    expect(report.mirror_id).toBe("fight");
+  });
+
+  it("nulls an empty error rather than sending a blank string", () => {
+    const report = qoeDelta(
+      { recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: null, lastError: "   ", mirrorId: "" },
+      { recoveryCount: 0, droppedFrames: 0 }
+    );
+    expect(report.last_error).toBeNull();
+    expect(report.mirror_id).toBeNull();
   });
 });

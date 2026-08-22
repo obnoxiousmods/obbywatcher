@@ -6,6 +6,11 @@ export type StreamMirror = {
   dashUrl: string;
   hlsUrl: string;
   delivery: "cloudflare" | "direct";
+  /** Mirrors that resolve to the same nginx vhost and the same encoder output.
+   *  fight.nswfiles.com and live.obnoxious.lol are one server block on one host,
+   *  so rotating between them after a failure re-tries the identical origin and
+   *  buys nothing but another teardown. Rotation must prefer a different origin. */
+  origin: string;
 };
 
 export type StreamProtocol = "dash" | "hls";
@@ -93,7 +98,8 @@ export const streamConfig = {
       pageUrl: "https://fight.nswfiles.com/",
       dashUrl: "https://fight.nswfiles.com/stream/ufc.mpd",
       hlsUrl: "https://fight.nswfiles.com/stream/ufc.m3u8",
-      delivery: "cloudflare"
+      delivery: "cloudflare",
+      origin: "live-vhost"
     },
     {
       id: "live",
@@ -102,7 +108,8 @@ export const streamConfig = {
       pageUrl: "https://live.obnoxious.lol/",
       dashUrl: "https://live.obnoxious.lol/stream/ufc.mpd",
       hlsUrl: "https://live.obnoxious.lol/stream/ufc.m3u8",
-      delivery: "cloudflare"
+      delivery: "cloudflare",
+      origin: "live-vhost"
     },
     {
       id: "cockpit-direct",
@@ -111,7 +118,8 @@ export const streamConfig = {
       pageUrl: "https://s.obby.ca/",
       dashUrl: "https://s.obby.ca/hls/ufc.mpd",
       hlsUrl: "https://s.obby.ca/hls/ufc.m3u8",
-      delivery: "direct"
+      delivery: "direct",
+      origin: "cockpit-vhost"
     }
   ] satisfies StreamMirror[],
   publicSources: fallbackPublicSources

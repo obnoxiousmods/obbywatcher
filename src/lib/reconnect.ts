@@ -48,6 +48,10 @@ type MirrorDelivery = "cloudflare" | "direct";
 type MirrorLike = {
   id: string;
   delivery: MirrorDelivery;
+  /** Mirrors sharing an origin resolve to the same vhost and the same encoder
+   *  output. Optional so callers with older mirror shapes still type-check; an
+   *  absent origin falls back to the mirror id, i.e. "shares with nobody". */
+  origin?: string;
 };
 
 type SourceLike = {
@@ -74,6 +78,11 @@ export function nextMirrorIndex(currentIndex: number, totalMirrors: number) {
   return (currentIndex + 1) % totalMirrors;
 }
 
+/** A mirror's origin group, falling back to its own id when untagged. */
+function originOf(mirror: MirrorLike | undefined, fallbackId: string | undefined) {
+  return mirror?.origin ?? mirror?.id ?? fallbackId ?? "";
+}
+
 export function chooseNextSourceIndex(
   currentIndex: number,
   sources: readonly SourceLike[],
@@ -84,18 +93,27 @@ export function chooseNextSourceIndex(
   const currentSource = sources[currentIndex] ?? sources[0];
   const currentMirror = mirrors.find((mirror) => mirror.id === currentSource?.mirrorId);
   const currentDelivery = currentMirror?.delivery ?? "cloudflare";
+  const currentOrigin = originOf(currentMirror, currentSource?.mirrorId);
 
   const ranked = sources
     .map((source, index) => {
       const mirror = mirrors.find((item) => item.id === source.mirrorId);
       const delivery = mirror?.delivery ?? "cloudflare";
       const distance = index > currentIndex ? index - currentIndex : index + sources.length - currentIndex;
-      const sameMirrorPenalty = source.mirrorId === currentSource?.mirrorId ? 100 : 0;
+      // Sharing an origin is the strongest signal that a candidate will fail for
+      // the same reason the current source just did: same vhost, same disk, same
+      // encoder. It outranks sharing a mirror id, which is only a subset of it.
+      const sameOriginPenalty = originOf(mirror, source.mirrorId) === currentOrigin ? 100 : 0;
+      const sameMirrorPenalty = source.mirrorId === currentSource?.mirrorId ? 40 : 0;
       const sameDeliveryPenalty = delivery === currentDelivery ? 20 : 0;
-      const differentProtocolPenalty = source.protocol === currentSource?.protocol ? 0 : 5;
+      // Switching protocol swaps the whole player engine (Shaka <-> hls.js), so
+      // it clears engine-specific faults. Prefer it over another mirror that is
+      // really the same server. This used to be inverted: a protocol change was
+      // PENALISED 5, so rotation exhausted every same-origin mirror first.
+      const sameProtocolPenalty = source.protocol === currentSource?.protocol ? 30 : 0;
       return {
         index,
-        score: sameMirrorPenalty + sameDeliveryPenalty + differentProtocolPenalty + distance,
+        score: sameOriginPenalty + sameMirrorPenalty + sameDeliveryPenalty + sameProtocolPenalty + distance,
       };
     })
     .filter((candidate) => candidate.index !== currentIndex)
@@ -111,8 +129,11 @@ export function shouldRotateMirror(consecutiveSourceFailures: number, totalMirro
 /** Never call a playlist stale sooner than this, however short the segments are.
  *  It has to clear the player's own loader timeouts (levelLoading 5s,
  *  fragLoading 7s) or a slow-but-successful load is declared stale before it can
- *  finish, and the pipeline is torn down for nothing. */
-export const MIN_PLAYLIST_STALE_MS = 12_000;
+ *  finish, and the pipeline is torn down for nothing.
+ *
+ *  12_000 is exactly 5s + 7s, i.e. zero margin: a load that succeeds on the last
+ *  retry lands precisely on the threshold and races it. Carry 3s of headroom. */
+export const MIN_PLAYLIST_STALE_MS = 15_000;
 
 export function isPlaylistStale({
   nowMs,

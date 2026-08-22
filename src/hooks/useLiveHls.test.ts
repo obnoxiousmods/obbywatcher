@@ -10,7 +10,8 @@ const mirrors: StreamMirror[] = [
     pageUrl: "https://fight.test/",
     dashUrl: "https://fight.test/stream.mpd",
     hlsUrl: "https://fight.test/stream.m3u8",
-    delivery: "cloudflare"
+    delivery: "cloudflare",
+    origin: "primary-vhost"
   },
   {
     id: "direct",
@@ -19,7 +20,8 @@ const mirrors: StreamMirror[] = [
     pageUrl: "https://s.test/",
     dashUrl: "https://s.test/stream.mpd",
     hlsUrl: "https://s.test/stream.m3u8",
-    delivery: "direct"
+    delivery: "direct",
+    origin: "direct-vhost"
   }
 ];
 
@@ -30,16 +32,26 @@ const ENCODER_SEGMENT_SECONDS = 2;
 const ENCODER_WINDOW_SECONDS = 30;
 
 describe("stable HLS config", () => {
-  it("uses hard-reconnect-first live playback settings", () => {
+  it("uses bounded loader timeouts", () => {
     const config = createStableHlsConfig();
 
     expect(config.lowLatencyMode).toBe(false);
     expect(config.manifestLoadingTimeOut).toBeLessThanOrEqual(5_000);
     expect(config.manifestLoadingMaxRetry).toBe(0);
     expect(config.levelLoadingTimeOut).toBeLessThanOrEqual(5_000);
-    expect(config.levelLoadingMaxRetry).toBe(0);
     expect(config.fragLoadingTimeOut).toBeLessThanOrEqual(7_000);
-    expect(config.fragLoadingMaxRetry).toBe(0);
+  });
+
+  it("lets hls.js absorb routine segment errors instead of rebuilding the pipeline", () => {
+    const config = createStableHlsConfig();
+
+    // With 0 retries, every 404 on a segment that had just rotated out of the
+    // live window counted toward softRecoveryFailureThreshold (3). Three of
+    // those -- routine on a live playlist with publish jitter -- destroyed and
+    // rebuilt the pipeline, and the rebuild is the visible skip. Shaka already
+    // had this budget via retryParameters.maxAttempts; hls.js did not.
+    expect(config.fragLoadingMaxRetry).toBeGreaterThanOrEqual(3);
+    expect(config.levelLoadingMaxRetry).toBeGreaterThanOrEqual(2);
   });
 
   it("targets a live latency the encoder can actually sustain", () => {

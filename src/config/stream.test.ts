@@ -10,6 +10,7 @@ describe("sourcesForMirror", () => {
     dashUrl: "https://fight.nswfiles.com/stream/ufc.mpd",
     hlsUrl: "https://fight.nswfiles.com/stream/ufc.m3u8",
     delivery: "cloudflare",
+    origin: "live-vhost",
   };
 
   it("derives a DASH and an HLS source from a mirror", () => {

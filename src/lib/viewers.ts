@@ -42,6 +42,13 @@ export type QoeReport = {
   reattaches: number;
   dropped_frames: number;
   live_latency_seconds: number | null;
+  /** Why the player last degraded. Without it the server can see THAT viewers
+   *  re-attach but never why, which is the difference between a diagnosable
+   *  regression and a guess. Truncated: this is a label, not a log line. */
+  last_error: string | null;
+  /** Which mirror the viewer is on. `playback` only carries the protocol, so
+   *  a mirror-specific fault is otherwise invisible in aggregate. */
+  mirror_id: string | null;
 };
 
 /**
@@ -54,14 +61,23 @@ export type QoeReport = {
  * every rebuild, so a decrease is treated as a reset and contributes nothing.
  */
 export function qoeDelta(
-  current: { recoveryCount: number; droppedFrames: number; liveLatencySeconds: number | null },
+  current: {
+    recoveryCount: number;
+    droppedFrames: number;
+    liveLatencySeconds: number | null;
+    lastError?: string | null;
+    mirrorId?: string | null;
+  },
   previous: { recoveryCount: number; droppedFrames: number }
 ): QoeReport {
   const latency = current.liveLatencySeconds;
+  const lastError = current.lastError?.trim();
   return {
     reattaches: Math.max(0, current.recoveryCount - previous.recoveryCount),
     dropped_frames: Math.max(0, current.droppedFrames - previous.droppedFrames),
     live_latency_seconds:
-      latency != null && Number.isFinite(latency) ? Math.round(latency * 10) / 10 : null
+      latency != null && Number.isFinite(latency) ? Math.round(latency * 10) / 10 : null,
+    last_error: lastError ? lastError.slice(0, 200) : null,
+    mirror_id: current.mirrorId || null
   };
 }

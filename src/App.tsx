@@ -593,7 +593,13 @@ export default function App() {
   // diagnosing "it's skipping" meant counting init-segment refetches in the
   // origin's access log. Mirrored into a ref so the 15s heartbeat can read the
   // latest values without taking the fast-changing snapshot as an effect dep.
-  const qoeSnapshotRef = useRef({ recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: null as number | null });
+  const qoeSnapshotRef = useRef({
+    recoveryCount: 0,
+    droppedFrames: 0,
+    liveLatencySeconds: null as number | null,
+    lastError: null as string | null,
+    mirrorId: null as string | null
+  });
   // recoveryCount/droppedFrames are cumulative and reset when the player is
   // rebuilt, so report deltas and never a negative one.
   const lastRecoveryCountRef = useRef(0);
@@ -616,7 +622,9 @@ export default function App() {
     recoveryCount: snapshot.recoveryCount,
     droppedFrames: snapshot.droppedFrames ?? 0,
     // Report whichever element is actually on screen.
-    liveLatencySeconds: overlayActive ? customLiveLatencySeconds : snapshot.liveLatencySeconds
+    liveLatencySeconds: overlayActive ? customLiveLatencySeconds : snapshot.liveLatencySeconds,
+    lastError: snapshot.lastError ?? null,
+    mirrorId: overlayActive ? "overlay" : streamConfig.mirrors[snapshot.activeMirrorIndex]?.id ?? null
   };
   const activePlaybackStatus: LivePlaybackStatus = overlayActive
     ? customPlayerBusy ? (playing ? "buffering" : "connecting") : playing ? "live" : "idle"

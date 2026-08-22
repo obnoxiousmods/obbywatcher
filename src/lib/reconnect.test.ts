@@ -32,25 +32,50 @@ describe("reconnect policy", () => {
     expect(nextMirrorIndex(1, 2)).toBe(0);
   });
 
-  it("prefers switching delivery families before trying another same-family route", () => {
-    expect(
-      chooseNextSourceIndex(
-        0,
-        [
-          { mirrorId: "fight", protocol: "dash" },
-          { mirrorId: "live", protocol: "dash" },
-          { mirrorId: "direct", protocol: "dash" },
-          { mirrorId: "fight", protocol: "hls" },
-          { mirrorId: "live", protocol: "hls" },
-          { mirrorId: "direct", protocol: "hls" },
-        ],
-        [
-          { id: "fight", delivery: "cloudflare" },
-          { id: "live", delivery: "cloudflare" },
-          { id: "direct", delivery: "direct" },
-        ]
-      )
-    ).toBe(2);
+  // The production shape: "fight" and "live" are two hostnames for ONE nginx
+  // vhost serving ONE encoder, both behind Cloudflare. "direct" is a separate
+  // vhost reached without Cloudflare.
+  const productionSources = [
+    { mirrorId: "fight", protocol: "dash" },
+    { mirrorId: "live", protocol: "dash" },
+    { mirrorId: "direct", protocol: "dash" },
+    { mirrorId: "fight", protocol: "hls" },
+    { mirrorId: "live", protocol: "hls" },
+    { mirrorId: "direct", protocol: "hls" },
+  ];
+  const productionMirrors = [
+    { id: "fight", delivery: "cloudflare" as const, origin: "live-vhost" },
+    { id: "live", delivery: "cloudflare" as const, origin: "live-vhost" },
+    { id: "direct", delivery: "direct" as const, origin: "cockpit-vhost" },
+  ];
+
+  it("never rotates to a mirror that shares an origin with the one that just failed", () => {
+    // From fight-dash (index 0), "live" is the same server: rotating there
+    // re-tries the identical origin and buys another teardown for nothing.
+    const next = chooseNextSourceIndex(0, productionSources, productionMirrors);
+    expect(productionSources[next].mirrorId).not.toBe("fight");
+    expect(productionSources[next].mirrorId).not.toBe("live");
+    expect(productionSources[next].mirrorId).toBe("direct");
+  });
+
+  it("prefers a different protocol on a different origin, so the engine changes too", () => {
+    // direct-hls: different origin, different delivery, and swaps Shaka for hls.js.
+    expect(chooseNextSourceIndex(0, productionSources, productionMirrors)).toBe(5);
+  });
+
+  it("falls back to the mirror id when no origin is tagged", () => {
+    // Untagged mirrors must not all collapse into one origin group.
+    const next = chooseNextSourceIndex(
+      0,
+      productionSources,
+      [
+        { id: "fight", delivery: "cloudflare" as const },
+        { id: "live", delivery: "cloudflare" as const },
+        { id: "direct", delivery: "direct" as const },
+      ]
+    );
+    expect(next).not.toBe(0);
+    expect(productionSources[next].mirrorId).not.toBe("fight");
   });
 
   it("cache-busts URLs without accumulating duplicate ow params", () => {
