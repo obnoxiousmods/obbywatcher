@@ -8,13 +8,16 @@ import {
   chooseNextSourceIndex,
   chooseFreshestProbe,
   getBufferedAhead,
+  isPlaybackStalled,
   isPlaylistStale,
+  liveEdgeBackoffSeconds,
   nextMirrorIndex,
   parseDashManifest,
   parseHlsManifest,
   retryDelayMs,
   shouldRotateMirror,
-  sourceWithCacheBust
+  sourceWithCacheBust,
+  withinAttachGrace
 } from "../lib/reconnect";
 import type { ManifestProbe, ManifestProbeFailure, ManifestProbeResult } from "../lib/reconnect";
 
@@ -81,6 +84,10 @@ export type LiveHlsOptions = {
   mirrorFailureThreshold?: number;
   softRecoveryFailureThreshold?: number;
   probeTimeoutMs?: number;
+  /** Grace period after an attach during which the stall/stale checks are muted.
+   *  An attach empties the buffer, so without this the recovery manufactures the
+   *  exact condition that triggers the next recovery. */
+  attachGraceMs?: number;
 };
 
 export type LiveHlsController = {
@@ -100,15 +107,19 @@ const defaultOptions: Required<LiveHlsOptions> = {
   active: true,
   autoPlay: true,
   forceAutoplayAudio: true,
-  backoffBaseMs: 300,
+  backoffBaseMs: 800,
   backoffMaxMs: 8_000,
   jitterRatio: 0.22,
   healthIntervalMs: 1_000,
   staleTargetDurations: 3,
-  stallTimeoutMs: 5_000,
-  mirrorFailureThreshold: 2,
-  softRecoveryFailureThreshold: 1,
-  probeTimeoutMs: 1_500
+  stallTimeoutMs: 8_000,
+  mirrorFailureThreshold: 4,
+  // hls.js emits non-fatal errors routinely on a lossy upstream (this one drops
+  // packets). Tearing the pipeline down on the first one is what produced 2-5
+  // visible skips per minute per viewer; let it self-heal a few times first.
+  softRecoveryFailureThreshold: 3,
+  probeTimeoutMs: 1_500,
+  attachGraceMs: 8_000
 };
 
 const emptySource: StreamSource = {
@@ -280,12 +291,25 @@ function probeSnapshotFromResult(probe: ManifestProbe, sources: readonly StreamS
 export function createStableHlsConfig(): Partial<HlsConfig> {
   return {
     lowLatencyMode: false,
-    liveSyncDurationCount: 3,
-    liveMaxLatencyDurationCount: 8,
-    maxLiveSyncPlaybackRate: 1.1,
+    // Counts of segments, not seconds. Sized against measured PUBLISH jitter,
+    // not against the nominal segment duration: the muxer emits perfectly
+    // uniform 2.002s of content, but the files land on disk in bursts — measured
+    // gaps 0.44s to 3.97s, with 26% over 3s. 3 segments (6s) leaves almost no
+    // margin when a 4s gap lands and every viewer stalls together; 4 absorbs it.
+    // Lower this only after the jitter is fixed at source (chunked CMAF output),
+    // not because the segments are "only" 2s long.
+    liveSyncDurationCount: 4,
+    liveMaxLatencyDurationCount: 12,
+    // This is hls.js's only smooth catch-up: below ~1.05 a viewer who falls 20s
+    // behind needs ~20min to recover and instead hits the seek-to-live threshold,
+    // which is a hard skip. 1.1 was audible; 1.05 recovers without warping pitch.
+    maxLiveSyncPlaybackRate: 1.05,
     backBufferLength: 90,
-    maxBufferLength: 60,
-    maxBufferHole: 0.5,
+    // Must stay under the 30s publish window or hls.js chases segments that
+    // have already rotated off the playlist.
+    maxBufferLength: 20,
+    // A jumpable hole was a quarter of a 2s segment; that reads as a skip.
+    maxBufferHole: 0.1,
     manifestLoadingTimeOut: 5_000,
     manifestLoadingMaxRetry: 0,
     levelLoadingTimeOut: 5_000,
@@ -347,6 +371,7 @@ export function useLiveHls(
     let lastSequenceAtMs: number | null = null;
     let lastTimeUpdateAtMs = Date.now();
     let lastObservedTime = 0;
+    let attachedAtMs = Date.now();
     let targetDurationSeconds = 4;
     const nativeControls = prefersNativeControls();
 
@@ -410,7 +435,9 @@ export function useLiveHls(
         mediaRecoveryAttempts = 0;
         softRecoveryFailures = 0;
         publish({ attempt: 0, lastError: null, lastFallbackReason: null, nextRetryAtMs: null });
-      }, 5_000);
+        // Must exceed stallTimeoutMs, or a stream that stalls every few seconds
+        // resets its own backoff before it can ever escalate.
+      }, 12_000);
     };
     const maybePlay = async () => {
       if (!opts.autoPlay) return;
@@ -424,13 +451,40 @@ export function useLiveHls(
       try {
         await video.play();
         publish({ autoplayBlocked: false, soundEnabled: !video.muted && video.volume > 0, lastError: null });
+        return;
+      } catch (error) {
+        // Every mobile browser blocks autoplay WITH SOUND. Without the retry
+        // below, unmuting first meant play() rejected and nothing played at all
+        // — a black player on every phone, while desktop worked because media
+        // engagement heuristics let the unmuted attempt through.
+        if (!opts.forceAutoplayAudio || video.muted) {
+          const name = error instanceof DOMException ? error.name : "AutoplayError";
+          publish({
+            status: "buffering",
+            autoplayBlocked: true,
+            soundEnabled: false,
+            lastError: `${name}: browser blocked autoplay. Press play.`
+          });
+          return;
+        }
+      }
+      // Muted autoplay is permitted everywhere. Start the picture immediately and
+      // let the viewer add sound with one tap, rather than showing them nothing.
+      try {
+        video.muted = true;
+        await video.play();
+        publish({
+          autoplayBlocked: true,
+          soundEnabled: false,
+          lastError: "Tap Enable sound to unmute."
+        });
       } catch (error) {
         const name = error instanceof DOMException ? error.name : "AutoplayError";
         publish({
           status: "buffering",
           autoplayBlocked: true,
           soundEnabled: false,
-          lastError: `${name}: browser blocked autoplay with sound. Press Enable sound.`
+          lastError: `${name}: browser blocked autoplay. Press play.`
         });
       }
     };
@@ -526,6 +580,9 @@ export function useLiveHls(
             scheduleReconnect(`${label}; hard reconnect after soft recovery failure`);
             return;
           }
+          // Let hls.js resume its own loaders rather than rebuilding the pipeline;
+          // a full re-attach costs the viewer a visible jump.
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
           publish({ status: data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ? "buffering" : "connecting", lastError: label });
           return;
         }
@@ -548,15 +605,42 @@ export function useLiveHls(
       shaka.polyfill.installAll();
       shakaPlayer = new shaka.Player(video);
       shakaPlayer.configure({
+        manifest: {
+          // The encoder derives suggestedPresentationDelay from seg_duration, so it
+          // advertises PT2S — one segment of buffer. Chasing that edge guarantees a
+          // rebuffer on any publish jitter. Ignore it and set our own.
+          dash: { ignoreSuggestedPresentationDelay: true },
+          // NB: this lives under `manifest`, not `streaming`. Shaka silently drops
+          // unknown config keys, so putting it in the wrong section is a no-op.
+          defaultPresentationDelay: 7
+        },
         streaming: {
-          bufferingGoal: 30,
-          rebufferingGoal: 3,
+          // Must stay well under the 30s publish window; 30 meant Shaka tried to
+          // buffer the entire window and sat at the oldest retained segment.
+          bufferingGoal: 12,
+          rebufferingGoal: 4,
           lowLatencyMode: false,
-          retryParameters: { maxAttempts: 2, baseDelay: 500, backoffFactor: 1.6, fuzzFactor: 0.2 }
+          // Without this Shaka has NO catch-up: one stall drops the viewer further
+          // behind live and they stay there for the rest of the session. Measured
+          // viewers stuck at 22/34/58s behind, each at their own fixed offset.
+          liveSync: {
+            enabled: true,
+            targetLatency: 8,
+            targetLatencyTolerance: 3,
+            maxPlaybackRate: 1.05,
+            minPlaybackRate: 0.95,
+            // Beyond this the drift is too big to rate-correct; jump to live.
+            panicMode: true,
+            panicThreshold: 30
+          },
+          retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.6, fuzzFactor: 0.2 }
         }
       });
       shakaPlayer.addEventListener("error", (event) => {
-        const detail = ("detail" in event ? event.detail : null) as { code?: number } | null;
+        const detail = ("detail" in event ? event.detail : null) as { code?: number; severity?: number } | null;
+        // Shaka retries recoverable errors itself (a 404 on a segment that just
+        // rotated is routine). Only a CRITICAL error means playback is actually dead.
+        if (detail?.severity !== undefined && detail.severity !== shaka.util.Error.Severity.CRITICAL) return;
         consecutiveSourceFailures += 1;
         scheduleReconnect(`DASH error${detail?.code ? ` ${detail.code}` : ""}`);
       });
@@ -585,6 +669,7 @@ export function useLiveHls(
       lastSegmentAtMs = null;
       lastSequenceAtMs = Date.now();
       lastTimeUpdateAtMs = Date.now();
+      attachedAtMs = Date.now();
       lastObservedTime = video.currentTime;
       mediaRecoveryAttempts = 0;
       softRecoveryFailures = 0;
@@ -657,6 +742,22 @@ export function useLiveHls(
       const now = Date.now();
       const bufferAheadSeconds = getBufferedAhead(video.buffered, video.currentTime);
       publish({ bufferAheadSeconds });
+      // An attach empties the buffer and parks the playhead. Judging health inside
+      // that window makes every recovery trigger the next one.
+      //
+      // The clocks must be carried forward through the window, not just left
+      // frozen: lastTimeUpdateAtMs/lastSequenceAtMs are stamped at attach, so
+      // skipping the checks alone means the stall and stale timers have already
+      // run their full length by the moment the grace lifts, and fire on the very
+      // next tick. That made the grace overlap the timeout instead of preceding
+      // it, and a client too slow to start playing within the grace re-attached
+      // forever on a fixed ~(grace + tick) cycle.
+      if (withinAttachGrace(now, attachedAtMs, opts.attachGraceMs)) {
+        lastTimeUpdateAtMs = now;
+        lastSequenceAtMs = now;
+        lastObservedTime = video.currentTime;
+        return;
+      }
       if (!video.paused && !video.ended) {
         const playheadMoved = Math.abs(video.currentTime - lastObservedTime) > 0.12;
         const source = sources[activeSourceIndex] ?? sources[0];
@@ -680,7 +781,15 @@ export function useLiveHls(
         if (playheadMoved) {
           lastTimeUpdateAtMs = now;
           lastObservedTime = video.currentTime;
-        } else if (now - lastTimeUpdateAtMs > opts.stallTimeoutMs && bufferAheadSeconds < 0.8) {
+        } else if (
+          isPlaybackStalled({
+            nowMs: now,
+            lastTimeUpdateAtMs,
+            stallTimeoutMs: opts.stallTimeoutMs,
+            playheadMoved,
+            bufferAheadSeconds
+          })
+        ) {
           consecutiveSourceFailures += 1;
           scheduleReconnect("Playback stalled at the live edge.");
         }
@@ -751,7 +860,9 @@ export function useLiveHls(
       seekToLive: () => {
         if (video.seekable.length > 0) {
           const liveEdge = video.seekable.end(video.seekable.length - 1);
-          video.currentTime = Math.max(0, liveEdge - 0.35);
+          // Landing 0.35s from the seekable end stalls immediately. Back off two
+          // segments so there is something to play once we land.
+          video.currentTime = Math.max(0, liveEdge - liveEdgeBackoffSeconds(targetDurationSeconds));
         }
         void maybePlay();
       },

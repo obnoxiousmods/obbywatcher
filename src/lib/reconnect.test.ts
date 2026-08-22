@@ -3,13 +3,17 @@ import {
   chooseNextSourceIndex,
   chooseFreshestProbe,
   getBufferedAhead,
+  isPlaybackStalled,
   isPlaylistStale,
+  liveEdgeBackoffSeconds,
+  MIN_PLAYLIST_STALE_MS,
   nextMirrorIndex,
   parseDashManifest,
   parseHlsManifest,
   retryDelayMs,
   shouldRotateMirror,
-  sourceWithCacheBust
+  sourceWithCacheBust,
+  withinAttachGrace
 } from "./reconnect";
 
 describe("reconnect policy", () => {
@@ -79,6 +83,38 @@ describe("reconnect policy", () => {
         staleTargetDurations: 4
       })
     ).toBe(false);
+  });
+
+  it("never declares a playlist stale faster than the player's own load timeouts", () => {
+    // 2s segments x 3 would be a 6s window, which is under hls.js's 7s
+    // fragLoadingTimeOut: a slow-but-successful load would be called stale and
+    // the pipeline torn down for nothing.
+    expect(
+      isPlaylistStale({
+        nowMs: 1_000 + 7_500,
+        lastSequenceAtMs: 1_000,
+        targetDurationSeconds: 2,
+        staleTargetDurations: 3
+      })
+    ).toBe(false);
+
+    expect(
+      isPlaylistStale({
+        nowMs: 1_000 + MIN_PLAYLIST_STALE_MS + 1,
+        lastSequenceAtMs: 1_000,
+        targetDurationSeconds: 2,
+        staleTargetDurations: 3
+      })
+    ).toBe(true);
+  });
+
+  it("backs off two segments when jumping to live", () => {
+    expect(liveEdgeBackoffSeconds(2)).toBe(4);
+    expect(liveEdgeBackoffSeconds(4)).toBe(8);
+    // Unparsed/zero target duration must still land somewhere playable.
+    expect(liveEdgeBackoffSeconds(0)).toBeGreaterThanOrEqual(4);
+    // And never so far back that "go live" isn't live.
+    expect(liveEdgeBackoffSeconds(60)).toBeLessThanOrEqual(8);
   });
 
   it("reports buffered seconds ahead of the current playhead", () => {
@@ -197,5 +233,72 @@ seg122.ts`);
         }
       ])?.mirrorIndex
     ).toBe(1);
+  });
+});
+
+describe("attach grace and stall detection", () => {
+  const GRACE = 8_000;
+  const STALL = 8_000;
+
+  it("mutes judgement for the whole grace window", () => {
+    expect(withinAttachGrace(1_000, 1_000, GRACE)).toBe(true);
+    expect(withinAttachGrace(1_000 + GRACE - 1, 1_000, GRACE)).toBe(true);
+    expect(withinAttachGrace(1_000 + GRACE, 1_000, GRACE)).toBe(false);
+  });
+
+  it("does not fire the instant the grace window lifts", () => {
+    // The bug: lastTimeUpdateAtMs stamped at attach and left frozen through the
+    // grace means the stall timer has already run its full length by the time
+    // judgement resumes, so it trips on the next tick and a slow client
+    // re-attaches forever. The caller must carry the clock forward, and this is
+    // what that looks like from here.
+    const attachedAt = 1_000;
+    const graceEnds = attachedAt + GRACE;
+    const carriedForward = graceEnds; // refreshed on the last in-grace tick
+
+    expect(
+      isPlaybackStalled({
+        nowMs: graceEnds + 1,
+        lastTimeUpdateAtMs: carriedForward,
+        stallTimeoutMs: STALL,
+        playheadMoved: false,
+        bufferAheadSeconds: 0
+      })
+    ).toBe(false);
+
+    // Total tolerance is grace + stallTimeout, not max(grace, stallTimeout).
+    expect(
+      isPlaybackStalled({
+        nowMs: graceEnds + STALL + 1,
+        lastTimeUpdateAtMs: carriedForward,
+        stallTimeoutMs: STALL,
+        playheadMoved: false,
+        bufferAheadSeconds: 0
+      })
+    ).toBe(true);
+  });
+
+  it("never reports a stall while the playhead is advancing", () => {
+    expect(
+      isPlaybackStalled({
+        nowMs: 10_000_000,
+        lastTimeUpdateAtMs: 0,
+        stallTimeoutMs: STALL,
+        playheadMoved: true,
+        bufferAheadSeconds: 0
+      })
+    ).toBe(false);
+  });
+
+  it("never reports a stall while there is buffer to play", () => {
+    expect(
+      isPlaybackStalled({
+        nowMs: 100_000,
+        lastTimeUpdateAtMs: 0,
+        stallTimeoutMs: STALL,
+        playheadMoved: false,
+        bufferAheadSeconds: 5
+      })
+    ).toBe(false);
   });
 });

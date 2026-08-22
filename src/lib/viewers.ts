@@ -36,3 +36,32 @@ export function totalViewerCount(viewers: ViewerSnapshot | null | undefined, fal
 
   return cleanCount(fallback) ?? 0;
 }
+
+/** A single viewer heartbeat's playback-quality payload. */
+export type QoeReport = {
+  reattaches: number;
+  dropped_frames: number;
+  live_latency_seconds: number | null;
+};
+
+/**
+ * Turn the player's cumulative counters into per-heartbeat deltas.
+ *
+ * recoveryCount and droppedFrames are cumulative for the life of a player
+ * instance, and both reset to zero when the pipeline is rebuilt (a source
+ * switch, an overlay toggle). Reporting the raw value would double-count on the
+ * server and reporting a naive difference would send a negative spike after
+ * every rebuild, so a decrease is treated as a reset and contributes nothing.
+ */
+export function qoeDelta(
+  current: { recoveryCount: number; droppedFrames: number; liveLatencySeconds: number | null },
+  previous: { recoveryCount: number; droppedFrames: number }
+): QoeReport {
+  const latency = current.liveLatencySeconds;
+  return {
+    reattaches: Math.max(0, current.recoveryCount - previous.recoveryCount),
+    dropped_frames: Math.max(0, current.droppedFrames - previous.droppedFrames),
+    live_latency_seconds:
+      latency != null && Number.isFinite(latency) ? Math.round(latency * 10) / 10 : null
+  };
+}

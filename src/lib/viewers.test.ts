@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { totalViewerCount, viewerCountForSource } from "./viewers";
+import { qoeDelta, totalViewerCount, viewerCountForSource } from "./viewers";
 
 describe("viewer count helpers", () => {
   it("prefers per-source counts from by_source", () => {
@@ -32,5 +32,48 @@ describe("viewer count helpers", () => {
   it("rejects invalid and negative counts", () => {
     expect(viewerCountForSource({ by_source: { a: -1 }, sources: [{ id: "a", viewer_count: 2 }] }, "a")).toBe(2);
     expect(totalViewerCount({ total: Number.NaN, by_source: { a: 1 } })).toBe(1);
+  });
+});
+
+describe("qoeDelta", () => {
+  it("reports the change since the previous heartbeat", () => {
+    const report = qoeDelta(
+      { recoveryCount: 7, droppedFrames: 120, liveLatencySeconds: 9.27 },
+      { recoveryCount: 4, droppedFrames: 100 }
+    );
+
+    expect(report.reattaches).toBe(3);
+    expect(report.dropped_frames).toBe(20);
+    expect(report.live_latency_seconds).toBe(9.3);
+  });
+
+  it("treats a counter reset as no activity rather than a negative spike", () => {
+    // The player rebuilds on a source switch and both counters restart at zero.
+    const report = qoeDelta(
+      { recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: 4 },
+      { recoveryCount: 12, droppedFrames: 900 }
+    );
+
+    expect(report.reattaches).toBe(0);
+    expect(report.dropped_frames).toBe(0);
+  });
+
+  it("omits latency that is unknown or not finite", () => {
+    expect(
+      qoeDelta({ recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: null }, { recoveryCount: 0, droppedFrames: 0 })
+        .live_latency_seconds
+    ).toBeNull();
+    expect(
+      qoeDelta({ recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: Infinity }, { recoveryCount: 0, droppedFrames: 0 })
+        .live_latency_seconds
+    ).toBeNull();
+  });
+
+  it("is stable when nothing changed", () => {
+    const report = qoeDelta(
+      { recoveryCount: 5, droppedFrames: 5, liveLatencySeconds: 0 },
+      { recoveryCount: 5, droppedFrames: 5 }
+    );
+    expect(report).toEqual({ reattaches: 0, dropped_frames: 0, live_latency_seconds: 0 });
   });
 });

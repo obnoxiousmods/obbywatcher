@@ -108,6 +108,12 @@ export function shouldRotateMirror(consecutiveSourceFailures: number, totalMirro
   return totalMirrors > 1 && consecutiveSourceFailures >= threshold;
 }
 
+/** Never call a playlist stale sooner than this, however short the segments are.
+ *  It has to clear the player's own loader timeouts (levelLoading 5s,
+ *  fragLoading 7s) or a slow-but-successful load is declared stale before it can
+ *  finish, and the pipeline is torn down for nothing. */
+export const MIN_PLAYLIST_STALE_MS = 12_000;
+
 export function isPlaylistStale({
   nowMs,
   lastSequenceAtMs,
@@ -117,9 +123,19 @@ export function isPlaylistStale({
   if (!lastSequenceAtMs) return false;
 
   const safeTargetSeconds = Math.max(2, targetDurationSeconds || 4);
-  const staleAfterMs = safeTargetSeconds * staleTargetDurations * 1000;
+  const staleAfterMs = Math.max(
+    MIN_PLAYLIST_STALE_MS,
+    safeTargetSeconds * staleTargetDurations * 1000
+  );
 
   return nowMs - lastSequenceAtMs > staleAfterMs;
+}
+
+/** How far back from the seekable end to land when jumping to live. Two segments,
+ *  so the playhead has buffered content under it instead of stalling on arrival. */
+export function liveEdgeBackoffSeconds(targetDurationSeconds: number) {
+  const safeTargetSeconds = Math.max(2, targetDurationSeconds || 4);
+  return Math.min(8, safeTargetSeconds * 2);
 }
 
 export function getBufferedAhead(buffered: TimeRangeSource, currentTime: number) {
@@ -244,4 +260,38 @@ export function chooseFreshestProbe(probes: readonly ManifestProbe[]) {
 
     return probe.fetchedAtMs > freshest.fetchedAtMs ? probe : freshest;
   });
+}
+
+/** True while a freshly attached player should not be judged at all. */
+export function withinAttachGrace(nowMs: number, attachedAtMs: number, attachGraceMs: number) {
+  return nowMs - attachedAtMs < attachGraceMs;
+}
+
+export type StallInput = {
+  nowMs: number;
+  lastTimeUpdateAtMs: number;
+  stallTimeoutMs: number;
+  playheadMoved: boolean;
+  bufferAheadSeconds: number;
+  minBufferSeconds?: number;
+};
+
+/**
+ * Whether playback has genuinely stalled and warrants tearing the pipeline down.
+ *
+ * Callers MUST keep lastTimeUpdateAtMs moving forward during the attach grace
+ * window. Leaving it stamped at attach time means this returns true on the first
+ * tick after the grace lifts, which collapses the tolerance from
+ * (grace + stallTimeout) to just grace and re-attaches a slow client forever.
+ */
+export function isPlaybackStalled({
+  nowMs,
+  lastTimeUpdateAtMs,
+  stallTimeoutMs,
+  playheadMoved,
+  bufferAheadSeconds,
+  minBufferSeconds = 0.8
+}: StallInput) {
+  if (playheadMoved) return false;
+  return nowMs - lastTimeUpdateAtMs > stallTimeoutMs && bufferAheadSeconds < minBufferSeconds;
 }

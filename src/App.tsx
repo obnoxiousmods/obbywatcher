@@ -7,14 +7,14 @@ import type { ThemeId } from "./config/themes";
 import { ufcSchedule, ufcScheduleLastChecked } from "./config/ufcSchedule";
 import { createStableHlsConfig, useLiveHls } from "./hooks/useLiveHls";
 import type { LivePlaybackStatus } from "./hooks/useLiveHls";
-import { parseHlsManifest, sourceWithCacheBust } from "./lib/reconnect";
+import { liveEdgeBackoffSeconds, parseHlsManifest, sourceWithCacheBust } from "./lib/reconnect";
 import {
   decideAutoFallback,
   nextFailureRecord,
   type CandidateSource,
   type FallbackDecision
 } from "./lib/sourceFallback";
-import { totalViewerCount, viewerCountForSource } from "./lib/viewers";
+import { qoeDelta, totalViewerCount, viewerCountForSource } from "./lib/viewers";
 import {
   clampVolume,
   eventStartMs,
@@ -24,6 +24,7 @@ import {
   getEventPhase,
   getScheduleBuckets,
   initialPlayerUiState,
+  playWithMutedFallback,
   playerUiReducer
 } from "./lib/playerControls";
 import type { PlayerUiState } from "./lib/playerControls";
@@ -336,19 +337,25 @@ function useOverlayVideoMetrics(videoRef: React.RefObject<HTMLVideoElement | nul
     if (!enabled) return undefined;
     const video = videoRef.current;
     if (!video) return undefined;
-    let rafId = 0;
+    // These feed a readout that a human reads a few times a second. A rAF loop
+    // allocating a fresh object every frame meant ~60 React re-renders/sec for
+    // the whole tree while the overlay was up, which is its own source of lag.
     const update = () => {
-      setMetrics({
+      const next = {
         bufferAheadSeconds: bufferedAheadForVideo(video),
         liveLatencySeconds: liveLatencyForVideo(video)
-      });
-      rafId = requestAnimationFrame(update);
+      };
+      setMetrics((current) =>
+        current.bufferAheadSeconds === next.bufferAheadSeconds &&
+        current.liveLatencySeconds === next.liveLatencySeconds
+          ? current
+          : next
+      );
     };
-    video.addEventListener("timeupdate", update);
-    rafId = requestAnimationFrame(update);
+    const intervalId = window.setInterval(update, 250);
+    update();
     return () => {
-      video.removeEventListener("timeupdate", update);
-      cancelAnimationFrame(rafId);
+      window.clearInterval(intervalId);
     };
   }, [enabled, videoRef]);
   return metrics;
@@ -580,6 +587,17 @@ export default function App() {
   const bufferAccumMsRef = useRef(0);
   const bufferStartRef = useRef<number | null>(null);
   const stallCountRef = useRef(0);
+  // The player already knows how far behind live it is and how many times it has
+  // torn itself down and re-attached — a re-attach restarts the playhead at live,
+  // so each one is a skip the viewer sees. None of it was ever reported, so
+  // diagnosing "it's skipping" meant counting init-segment refetches in the
+  // origin's access log. Mirrored into a ref so the 15s heartbeat can read the
+  // latest values without taking the fast-changing snapshot as an effect dep.
+  const qoeSnapshotRef = useRef({ recoveryCount: 0, droppedFrames: 0, liveLatencySeconds: null as number | null });
+  // recoveryCount/droppedFrames are cumulative and reset when the player is
+  // rebuilt, so report deltas and never a negative one.
+  const lastRecoveryCountRef = useRef(0);
+  const lastDroppedFramesRef = useRef(0);
   useEffect(() => {
     if (activePlayerBusy) {
       if (bufferStartRef.current == null) {
@@ -594,6 +612,12 @@ export default function App() {
   const customVideoMetrics = useOverlayVideoMetrics(customVideoRef, overlayActive);
   const customLiveLatencySeconds = overlayActive ? customVideoMetrics.liveLatencySeconds : null;
   const customBufferAheadSeconds = overlayActive ? customVideoMetrics.bufferAheadSeconds : 0;
+  qoeSnapshotRef.current = {
+    recoveryCount: snapshot.recoveryCount,
+    droppedFrames: snapshot.droppedFrames ?? 0,
+    // Report whichever element is actually on screen.
+    liveLatencySeconds: overlayActive ? customLiveLatencySeconds : snapshot.liveLatencySeconds
+  };
   const activePlaybackStatus: LivePlaybackStatus = overlayActive
     ? customPlayerBusy ? (playing ? "buffering" : "connecting") : playing ? "live" : "idle"
     : snapshot.status;
@@ -856,7 +880,7 @@ export default function App() {
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setCustomPlayerBusy(false);
-        void video.play().catch(() => undefined);
+        void playWithMutedFallback(video);
       });
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (data.fatal) {
@@ -869,7 +893,7 @@ export default function App() {
       // Safari native HLS
       video.src = customSrc;
       video.load();
-      void video.play().catch(() => undefined);
+      void playWithMutedFallback(video);
     }
 
     return () => {
@@ -1118,6 +1142,13 @@ export default function App() {
       bufferAccumMsRef.current = 0;
       const stalls = stallCountRef.current;
       stallCountRef.current = 0;
+      const qoe = qoeSnapshotRef.current;
+      const qoeReport = qoeDelta(qoe, {
+        recoveryCount: lastRecoveryCountRef.current,
+        droppedFrames: lastDroppedFramesRef.current
+      });
+      lastRecoveryCountRef.current = qoe.recoveryCount;
+      lastDroppedFramesRef.current = qoe.droppedFrames;
       try {
         const resp = await fetch(`${OBBY_COCKPIT}/api/viewers`, {
           method: "POST",
@@ -1129,7 +1160,8 @@ export default function App() {
             page: window.location.href,
             playback: customSrc ? "overlay-hls" : activeSource.protocol,
             buffering_ms: Math.round(bufferingMs),
-            stalls
+            stalls,
+            ...qoeReport
           })
         });
         const data = await resp.json() as { ok: boolean; viewers?: ViewerCounts };
@@ -1490,7 +1522,9 @@ export default function App() {
     if (customSrc) {
       if (video.seekable.length > 0) {
         const liveEdge = video.seekable.end(video.seekable.length - 1);
-        video.currentTime = Math.max(0, liveEdge - 0.35);
+        // Overlay sources have no parsed target duration here, so use the same
+        // two-segment default the managed player lands on.
+        video.currentTime = Math.max(0, liveEdge - liveEdgeBackoffSeconds(0));
       }
       void video.play().catch(() => undefined);
       return;

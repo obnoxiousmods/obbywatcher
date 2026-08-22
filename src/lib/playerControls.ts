@@ -116,3 +116,30 @@ export function getScheduleBuckets(events: readonly UfcEvent[], nowMs = Date.now
 
   return { current, next, upcoming };
 }
+
+/**
+ * Start playback, falling back to muted if the browser refuses sound.
+ *
+ * Every mobile browser blocks autoplay with audio, and an unmuted play() there
+ * rejects outright — which, if the rejection is simply swallowed, leaves the
+ * viewer staring at a black player. Muted playback is always permitted, so show
+ * the picture and let them add sound with one tap.
+ *
+ * Returns whether audio survived, so the caller can surface an "Enable sound"
+ * affordance when it did not.
+ */
+export async function playWithMutedFallback(video: HTMLVideoElement): Promise<{ playing: boolean; muted: boolean }> {
+  try {
+    await video.play();
+    return { playing: true, muted: video.muted };
+  } catch {
+    if (video.muted) return { playing: false, muted: true };
+  }
+  try {
+    video.muted = true;
+    await video.play();
+    return { playing: true, muted: true };
+  } catch {
+    return { playing: false, muted: true };
+  }
+}

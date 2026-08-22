@@ -29,11 +29,19 @@ if [[ ! -d "$STREAM_DIR" ]]; then
 fi
 
 sudo install -d -m 0755 "$TARGET_DIR"
+# Keep the previous build's hashed assets. A browser holding a cached index.html
+# (or a tab opened moments before the deploy) still references the old bundle, and
+# deleting it turns that into a 404 and a blank page. They are pruned below once
+# no client can reasonably still be pointing at them.
 sudo rsync -a --delete \
+  --filter 'protect /assets/***' \
   --exclude '/stream/***' \
   --exclude '/stream' \
   --exclude '*.map' \
   "$DIST_DIR/" "$TARGET_DIR/"
+
+# Drop assets that no current or recent build references.
+sudo find "$TARGET_DIR/assets" -type f -mtime +2 -delete 2>/dev/null || true
 
 sudo find "$TARGET_DIR" -path "$STREAM_DIR" -prune -o -type d -exec chmod 0755 {} +
 sudo find "$TARGET_DIR" -path "$STREAM_DIR" -prune -o -type f -exec chmod 0644 {} +

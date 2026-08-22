@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getEventPhase, getScheduleBuckets, initialPlayerUiState, playerUiReducer } from "./playerControls";
+import { getEventPhase, getScheduleBuckets, initialPlayerUiState, playWithMutedFallback, playerUiReducer } from "./playerControls";
 import { ufcSchedule } from "../config/ufcSchedule";
 import type { UfcEvent } from "../config/ufcSchedule";
 
@@ -80,5 +80,43 @@ describe("UFC schedule helpers", () => {
     expect(tbaEvents.every((event) => event.dateIso && getEventPhase(event, Date.parse("2026-06-20T22:00:00Z")) === "TBA")).toBe(
       true
     );
+  });
+});
+
+describe("playWithMutedFallback", () => {
+  function fakeVideo(opts: { rejectUnmuted?: boolean; rejectAlways?: boolean } = {}): HTMLVideoElement {
+    return {
+      muted: false,
+      play(this: { muted: boolean }) {
+        if (opts.rejectAlways) return Promise.reject(new DOMException("blocked", "NotAllowedError"));
+        if (opts.rejectUnmuted && !this.muted) {
+          return Promise.reject(new DOMException("blocked", "NotAllowedError"));
+        }
+        return Promise.resolve();
+      }
+    } as unknown as HTMLVideoElement;
+  }
+
+  it("keeps audio when the browser allows it", async () => {
+    const video = fakeVideo();
+    expect(await playWithMutedFallback(video)).toEqual({ playing: true, muted: false });
+  });
+
+  it("falls back to muted rather than showing nothing", async () => {
+    // The mobile case: unmuted autoplay is refused, muted is allowed.
+    const video = fakeVideo({ rejectUnmuted: true });
+    expect(await playWithMutedFallback(video)).toEqual({ playing: true, muted: true });
+    expect(video.muted).toBe(true);
+  });
+
+  it("reports failure when even muted playback is refused", async () => {
+    const video = fakeVideo({ rejectAlways: true });
+    expect(await playWithMutedFallback(video)).toEqual({ playing: false, muted: true });
+  });
+
+  it("does not retry when it was already muted", async () => {
+    const video = fakeVideo({ rejectAlways: true });
+    video.muted = true;
+    expect(await playWithMutedFallback(video)).toEqual({ playing: false, muted: true });
   });
 });
