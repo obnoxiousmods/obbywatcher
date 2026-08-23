@@ -564,8 +564,12 @@ export default function App() {
     }),
     [customSrc]
   );
-  const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror, switchProtocol } =
+  const { snapshot, activeMirror, activeSource, retryNow, reload, hardReconnect, enableAudio, seekToLive, switchMirror, switchProtocol, collectDiagnostics } =
     useLiveHls(videoRef, streamConfig.mirrors, playerOptions);
+  // Held in a ref so the 15s heartbeat effect does not have to depend on it and
+  // restart -- restarting the interval would keep resetting the metric window.
+  const collectDiagnosticsRef = useRef(collectDiagnostics);
+  collectDiagnosticsRef.current = collectDiagnostics;
   const overlayActive = Boolean(customSrc);
   const activeSourceId = overlaySource?.id ?? "server-1";
   const activeSourceLabel = overlaySource?.label ?? "Server 1 / Default";
@@ -1157,6 +1161,9 @@ export default function App() {
       });
       lastRecoveryCountRef.current = qoe.recoveryCount;
       lastDroppedFramesRef.current = qoe.droppedFrames;
+      // Drains the player's diagnostic window. Exactly one caller may do this;
+      // a second would split the window and silently halve every counter.
+      const diagnostics = collectDiagnosticsRef.current();
       try {
         const resp = await fetch(`${OBBY_COCKPIT}/api/viewers`, {
           method: "POST",
@@ -1169,7 +1176,11 @@ export default function App() {
             playback: customSrc ? "overlay-hls" : activeSource.protocol,
             buffering_ms: Math.round(bufferingMs),
             stalls,
-            ...qoeReport
+            ...qoeReport,
+            ...diagnostics.metrics,
+            // The timeline. Aggregates say a stall happened; only the ordering
+            // says what preceded it. Bounded per beat so the payload stays small.
+            events: diagnostics.events.slice(-60)
           })
         });
         const data = await resp.json() as { ok: boolean; viewers?: ViewerCounts };

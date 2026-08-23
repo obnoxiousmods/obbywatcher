@@ -106,6 +106,7 @@ if (played.length < 10) {
   process.exit(2);
 }
 
+const pct = (a, q) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * q))]; };
 const startupMs = played[0].t;
 const steady = played.filter((s) => s.t >= WARMUP_MS);
 if (steady.length < 10) {
@@ -121,8 +122,6 @@ const rates = [...new Set(steady.map((s) => s.rate))];
 const startupFreezes = P.freezes.filter((f) => f.start < WARMUP_MS && f.ms >= FREEZE_THRESHOLD_MS);
 const real = P.freezes.filter((f) => f.start >= WARMUP_MS && f.ms >= FREEZE_THRESHOLD_MS);
 const steadyEvents = P.events.filter((e) => e.t >= WARMUP_MS);
-const pct = (a, q) => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * q))]; };
-
 console.log(`\n=== PLAYBACK PROOF (${BROWSER}) ===`);
 console.log(`  startup: first frame at ${(startupMs / 1000).toFixed(2)}s, ${startupFreezes.length} startup buffer event(s) [excluded from verdict]`);
 console.log(`  --- steady state, after ${WARMUP_MS / 1000}s warmup ---`);
@@ -130,6 +129,20 @@ console.log(`  wall ${wall.toFixed(1)}s -> media advanced ${media.toFixed(1)}s  
 console.log(`  buffer ahead   min=${Math.min(...aheads).toFixed(2)}s  p50=${pct(aheads, 0.5).toFixed(2)}s  max=${Math.max(...aheads).toFixed(2)}s`);
 if (lats.length) console.log(`  live latency   min=${Math.min(...lats).toFixed(2)}s  p50=${pct(lats, 0.5).toFixed(2)}s  max=${Math.max(...lats).toFixed(2)}s`);
 console.log(`  playback rates seen: ${rates.join(", ")}  (1 only = no catch-up warping)`);
+// Live-sync is a control loop: it corrects until latency reaches target, then
+// stops. A correction that is CONVERGING is a startup transient; one that never
+// releases is a standing lag. Splitting the window in half distinguishes them.
+{
+  const mid = Math.floor(steady.length / 2);
+  const half = (arr) => {
+    const a = arr[0], b = arr[arr.length - 1];
+    return (b.ct - a.ct) / ((b.t - a.t) / 1000);
+  };
+  const h1 = steady.slice(0, mid), h2 = steady.slice(mid);
+  const atOne = (arr) => (100 * arr.filter((x) => x.rate === 1).length / arr.length).toFixed(0);
+  console.log(`  rate 1st half=${half(h1).toFixed(4)}x (${atOne(h1)}% at 1.0x)  2nd half=${half(h2).toFixed(4)}x (${atOne(h2)}% at 1.0x)`);
+  console.log(`  latency 1st half p50=${pct(h1.map((x) => x.lat).filter((x) => x !== null), 0.5)}s  2nd half p50=${pct(h2.map((x) => x.lat).filter((x) => x !== null), 0.5)}s`);
+}
 console.log(`  FREEZES >= ${FREEZE_THRESHOLD_MS}ms: ${real.length}${real.length ? "  " + JSON.stringify(real.slice(0, 10)) : ""}`);
 console.log(`  total frozen: ${(P.freezes.filter((f) => f.start >= WARMUP_MS).reduce((a, f) => a + f.ms, 0) / 1000).toFixed(2)}s of ${wall.toFixed(0)}s`);
 const counts = {};

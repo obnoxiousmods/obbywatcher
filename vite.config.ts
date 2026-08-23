@@ -5,7 +5,11 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    sourcemap: false,
+    // Built so a production stack trace is readable. deploy.sh excludes *.map
+    // from the public root, so the maps stay in dist/ for local symbolication
+    // without publishing the source. Without this, lastError from a real viewer
+    // is minified noise.
+    sourcemap: true,
     rollupOptions: {
       output: {
         manualChunks: {

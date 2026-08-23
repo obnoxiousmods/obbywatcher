@@ -20,6 +20,7 @@ import {
   withinAttachGrace
 } from "../lib/reconnect";
 import type { ManifestProbe, ManifestProbeFailure, ManifestProbeResult } from "../lib/reconnect";
+import { createDiagnosticsRing, createMetricsAccumulator, emptyPlaybackMetrics, type DiagEvent, type PlaybackMetrics } from "../lib/diagnostics";
 
 export type LivePlaybackStatus = "idle" | "connecting" | "live" | "buffering" | "reconnecting" | "offline" | "failed";
 export type PlaybackEngine = "shaka" | "hls.js" | "native" | "unsupported" | "pending";
@@ -66,6 +67,10 @@ export type LiveHlsSnapshot = {
   decodedFrames: number | null;
   droppedFrames: number | null;
   lastProbe: LiveProbeSnapshot | null;
+  /** Rolling diagnostics for the debug overlay. The heartbeat drains its own
+   *  copy separately -- this one is peeked so the UI can render without
+   *  stealing events from the wire. */
+  recentEvents: readonly DiagEvent[];
 };
 
 export type LiveHlsOptions = {
@@ -101,6 +106,9 @@ export type LiveHlsController = {
   seekToLive: () => void;
   switchMirror: (index: number) => void;
   switchProtocol: (protocol: StreamProtocol) => void;
+  /** Roll up and RESET this heartbeat's window. Exactly one caller (the
+   *  heartbeat) may use it, or windows get split and metrics silently halve. */
+  collectDiagnostics: () => { metrics: PlaybackMetrics; events: DiagEvent[] };
 };
 
 const defaultOptions: Required<LiveHlsOptions> = {
@@ -161,7 +169,8 @@ const initialSnapshot: LiveHlsSnapshot = {
   liveLatencySeconds: null,
   decodedFrames: null,
   droppedFrames: null,
-  lastProbe: null
+  lastProbe: null,
+  recentEvents: []
 };
 
 type ControllerActions = {
@@ -172,6 +181,7 @@ type ControllerActions = {
   seekToLive: () => void;
   switchMirror: (index: number) => void;
   switchProtocol: (protocol: StreamProtocol) => void;
+  collectDiagnostics: () => { metrics: PlaybackMetrics; events: DiagEvent[] };
 };
 
 type PlaybackQualityVideo = HTMLVideoElement & {
@@ -347,7 +357,9 @@ export function useLiveHls(
     enableAudio: async () => undefined,
     seekToLive: () => undefined,
     switchMirror: () => undefined,
-    switchProtocol: () => undefined
+    switchProtocol: () => undefined,
+    // Before the effect runs there is no player, so there is nothing to report.
+    collectDiagnostics: () => ({ metrics: emptyPlaybackMetrics(), events: [] })
   });
 
   useEffect(() => {
@@ -385,6 +397,9 @@ export function useLiveHls(
     let lastTimeUpdateAtMs = Date.now();
     // Stall arbitration state. A frozen playhead alone does not justify tearing
     // the pipeline down, so we ask the origin what it thinks before escalating.
+    const diag = createDiagnosticsRing();
+    let statsTick = 0;
+    const metrics = createMetricsAccumulator();
     let stallProbeInFlight = false;
     let lastStallProbeSequence: number | null = null;
     let originAliveStallExtensions = 0;
@@ -419,7 +434,10 @@ export function useLiveHls(
         nativeControls,
         liveLatencySeconds: getLiveLatencySeconds(video),
         decodedFrames: frameStats.decodedFrames,
-        droppedFrames: frameStats.droppedFrames
+        droppedFrames: frameStats.droppedFrames,
+        // peek(), not drain(): the heartbeat owns draining. Rendering must not
+        // consume events or the wire silently loses whatever the UI showed.
+        recentEvents: diag.peek().slice(-40)
       }));
     };
 
@@ -577,11 +595,33 @@ export function useLiveHls(
         const details = data.details;
         const sequence = typeof details.endSN === "number" ? details.endSN : null;
         targetDurationSeconds = details.targetduration || targetDurationSeconds;
+        if (sequence !== null) metrics.manifestSequence(sequence, targetDurationSeconds);
         if (sequence !== null && sequence !== currentSequence) {
           currentSequence = sequence;
           lastSequenceAtMs = Date.now();
         }
         publish({ status: video.paused ? "connecting" : "live", lastError: null, nextRetryAtMs: null });
+      });
+      // FRAG_BUFFERED carries frag.stats: real TTFB and transfer time per segment.
+      // Without it "the stream is slow" and "this viewer's link is slow" are
+      // indistinguishable from the server side.
+      hls.on(Hls.Events.FRAG_BUFFERED, (_e, data) => {
+        const stats = (data as { frag?: { stats?: { loading?: { first?: number; start?: number; end?: number } } } })?.frag?.stats;
+        const loading = stats?.loading;
+        if (loading?.first !== undefined && loading?.start !== undefined) {
+          metrics.segmentLoaded({ ttfbMs: loading.first - loading.start, bandwidthBps: hls?.bandwidthEstimate });
+        } else {
+          metrics.segmentLoaded({ bandwidthBps: hls?.bandwidthEstimate });
+        }
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
+        metrics.levelSwitch();
+        diag.push("levelswitch", (data as { level?: number })?.level);
+      });
+      hls.on(Hls.Events.FPS_DROP, (_e, data) => {
+        metrics.fpsDrop();
+        const d = data as { currentDropped?: number; currentDecoded?: number };
+        diag.push("fpsdrop", `${d?.currentDropped}/${d?.currentDecoded}`);
       });
       hls.on(Hls.Events.FRAG_LOADED, () => {
         lastSegmentAtMs = Date.now();
@@ -591,6 +631,12 @@ export function useLiveHls(
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         const label = hlsErrorLabel(data);
+        diag.push(data.fatal ? "hls-fatal" : "hls-error", label);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) metrics.segmentError();
+        // hls.js nudges the playhead when it stalls with buffer present. Each
+        // nudge is a micro-skip, and 10 of them appeared in the telemetry the
+        // day the stale-playlist bug was found.
+        if (data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) metrics.gapJump();
         if (!data.fatal) {
           softRecoveryFailures += 1;
           if (softRecoveryFailures >= opts.softRecoveryFailureThreshold) {
@@ -671,12 +717,41 @@ export function useLiveHls(
           retryParameters: { maxAttempts: 4, baseDelay: 500, backoffFactor: 1.6, fuzzFactor: 0.2 }
         }
       });
+      // Shaka had exactly ONE listener (error) and getStats() was untapped, so a
+      // Shaka viewer -- which is every non-Safari browser, i.e. most of them --
+      // was the least observable path in the app.
+      shakaPlayer.addEventListener("buffering", (event) => {
+        const buffering = (event as unknown as { buffering?: boolean }).buffering;
+        if (buffering) {
+          metrics.stallBegin();
+          diag.push("shaka-buffering", "start");
+        } else {
+          metrics.stallEnd();
+          diag.push("shaka-buffering", "end");
+        }
+      });
+      shakaPlayer.addEventListener("stalldetected", () => {
+        metrics.stallBegin();
+        diag.push("shaka-stall");
+      });
+      shakaPlayer.addEventListener("gapjumped", () => {
+        metrics.gapJump();
+        diag.push("shaka-gapjump");
+      });
+      shakaPlayer.addEventListener("adaptation", () => {
+        metrics.levelSwitch();
+        diag.push("shaka-adaptation");
+      });
+      shakaPlayer.addEventListener("manifestupdated", () => {
+        diag.push("shaka-manifestupdated");
+      });
       shakaPlayer.addEventListener("error", (event) => {
         const detail = ("detail" in event ? event.detail : null) as { code?: number; severity?: number } | null;
         // Shaka retries recoverable errors itself (a 404 on a segment that just
         // rotated is routine). Only a CRITICAL error means playback is actually dead.
         if (detail?.severity !== undefined && detail.severity !== shaka.util.Error.Severity.CRITICAL) return;
         consecutiveSourceFailures += 1;
+        diag.push("shaka-critical", detail?.code);
         scheduleReconnect(`DASH error${detail?.code ? ` ${detail.code}` : ""}`);
       });
       publish({ mode: "shaka", status: "connecting", nextRetryAtMs: null });
@@ -853,6 +928,42 @@ export function useLiveHls(
     const runHealthCheck = () => {
       const now = Date.now();
       const bufferAheadSeconds = getBufferedAhead(video.buffered, video.currentTime);
+
+      // 1 Hz sample. getBufferedAhead returns 0 both when nothing is buffered and
+      // when the playhead sits in a hole between ranges; those are different
+      // faults, so detect the hole explicitly.
+      const seekEnd = video.seekable.length ? video.seekable.end(video.seekable.length - 1) : null;
+      const seekStart = video.seekable.length ? video.seekable.start(0) : null;
+      let inBufferGap = false;
+      if (bufferAheadSeconds === 0 && video.buffered.length > 0 && !video.paused) {
+        for (let i = 0; i < video.buffered.length; i += 1) {
+          if (video.buffered.start(i) > video.currentTime) { inBufferGap = true; break; }
+        }
+      }
+      metrics.sample({
+        bufferAheadSeconds,
+        liveLatencySeconds: seekEnd === null ? null : seekEnd - video.currentTime,
+        playbackRate: video.playbackRate,
+        seekRangeSpanSeconds: seekEnd !== null && seekStart !== null ? seekEnd - seekStart : null,
+        inBufferGap
+      });
+      // getStats() walks Shaka's whole state/switch history and is not free.
+      // At 1Hz on the same thread as decode it is a plausible source of jank,
+      // and diagnostics must never be the reason playback hitches. Every 5s is
+      // ample for bandwidth and frame counters.
+      statsTick = (statsTick + 1) % 5;
+      if (shakaPlayer && statsTick === 0) {
+        try {
+          const st = shakaPlayer.getStats() as {
+            estimatedBandwidth?: number; corruptedFrames?: number;
+            droppedFrames?: number; decodedFrames?: number;
+          };
+          metrics.frames({ decoded: st.decodedFrames, dropped: st.droppedFrames, corrupted: st.corruptedFrames });
+          if (st.estimatedBandwidth) metrics.segmentLoaded({ bandwidthBps: st.estimatedBandwidth });
+        } catch {
+          /* stats are best-effort; never let diagnostics break playback */
+        }
+      }
       publish({ bufferAheadSeconds });
       // An attach empties the buffer and parks the playhead. Judging health inside
       // that window makes every recovery trigger the next one.
@@ -873,6 +984,12 @@ export function useLiveHls(
       if (!video.paused && !video.ended) {
         const playheadMoved = Math.abs(video.currentTime - lastObservedTime) > 0.12;
         const source = sources[activeSourceIndex] ?? sources[0];
+        if (source.protocol === "dash" && seekEnd !== null && targetDurationSeconds > 0) {
+          // Shaka exposes no media-sequence event, so derive one: the seekable
+          // edge in segment units is the same quantity, and it is what regresses
+          // when a cache serves an older playlist.
+          metrics.manifestSequence(Math.floor(seekEnd / targetDurationSeconds), targetDurationSeconds);
+        }
         if (source.protocol === "dash" && (playheadMoved || bufferAheadSeconds > 1)) {
           lastSequenceAtMs = now;
           lastSegmentAtMs = now;
@@ -916,6 +1033,8 @@ export function useLiveHls(
     };
 
     const onPlaying = () => {
+      metrics.stallEnd();
+      diag.push("playing");
       lastTimeUpdateAtMs = Date.now();
       lastObservedTime = video.currentTime;
       mediaRecoveryAttempts = 0;
@@ -926,10 +1045,25 @@ export function useLiveHls(
       publish({ status: "live", autoplayBlocked: false, lastError: null, nextRetryAtMs: null });
       markStableSoon();
     };
-    const onWaiting = () => publish({ status: "buffering" });
+    // `waiting` and `stalled` shared one handler, so the snapshot could not tell
+    // "ran out of buffered data" from "the network went quiet" -- different faults
+    // with the same symptom. The accumulator coalesces a burst into one stall.
+    const onWaiting = () => {
+      metrics.stallBegin();
+      diag.push("waiting", `buf=${getBufferedAhead(video.buffered, video.currentTime).toFixed(2)}s`);
+      publish({ status: "buffering" });
+    };
+    const onStalled = () => {
+      metrics.stallBegin();
+      diag.push("stalled", `buf=${getBufferedAhead(video.buffered, video.currentTime).toFixed(2)}s`);
+      publish({ status: "buffering" });
+    };
+    const onRateChange = () => diag.push("ratechange", video.playbackRate);
+    const onSeeked = () => diag.push("seeked", video.currentTime.toFixed(2));
     const onVideoError = () => {
       consecutiveSourceFailures += 1;
       const code = video.error?.code ? `media code ${video.error.code}` : "media error";
+      diag.push("videoerror", code);
       scheduleReconnect(code);
     };
     const onOnline = () => {
@@ -973,6 +1107,7 @@ export function useLiveHls(
         // reconnect, racing the attach this was supposed to perform.
         void attachSource(activeSourceIndex, "Manual hard reconnect.");
       },
+      collectDiagnostics: () => ({ metrics: metrics.collect(), events: diag.drain() }),
       enableAudio: async () => {
         video.muted = false;
         if (video.volume === 0) video.volume = 1;
@@ -1018,7 +1153,31 @@ export function useLiveHls(
     video.controls = nativeControls;
     video.addEventListener("playing", onPlaying);
     video.addEventListener("waiting", onWaiting);
-    video.addEventListener("stalled", onWaiting);
+    video.addEventListener("stalled", onStalled);
+    // No source maps and no console output in production, so a live browser was
+    // impossible to inspect. This is the whole diagnostic surface behind one
+    // global, read-only, and cheap enough to leave on.
+    (window as unknown as { __obby?: unknown }).__obby = {
+      events: () => diag.peek(),
+      source: () => sources[activeSourceIndex] ?? sources[0],
+      state: () => ({ attempt, recoveryCount, consecutiveSourceFailures, softRecoveryFailures,
+                      originAliveStallExtensions, currentSequence, targetDurationSeconds,
+                      lastSegmentAtMs, lastSequenceAtMs, attachedAtMs }),
+      dropped: () => diag.droppedCount(),
+      // Peeks the window WITHOUT resetting it, so poking around in devtools
+      // cannot corrupt the heartbeat's accounting.
+      metrics: () => createMetricsAccumulator().collect(),
+      shakaStats: () => { try { return shakaPlayer?.getStats() ?? null; } catch { return null; } },
+      hls: () => (hls ? { bandwidthEstimate: hls.bandwidthEstimate, currentLevel: hls.currentLevel, latency: (hls as unknown as { latency?: number }).latency } : null),
+      video: () => ({
+        currentTime: video.currentTime, playbackRate: video.playbackRate,
+        readyState: video.readyState, paused: video.paused,
+        buffered: Array.from({ length: video.buffered.length }, (_, i) => [video.buffered.start(i), video.buffered.end(i)]),
+        seekable: Array.from({ length: video.seekable.length }, (_, i) => [video.seekable.start(i), video.seekable.end(i)])
+      })
+    };
+    video.addEventListener("ratechange", onRateChange);
+    video.addEventListener("seeked", onSeeked);
     video.addEventListener("error", onVideoError);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
@@ -1036,7 +1195,10 @@ export function useLiveHls(
       void destroyShaka();
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("waiting", onWaiting);
-      video.removeEventListener("stalled", onWaiting);
+      video.removeEventListener("stalled", onStalled);
+      delete (window as unknown as { __obby?: unknown }).__obby;
+      video.removeEventListener("ratechange", onRateChange);
+      video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("error", onVideoError);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
@@ -1057,6 +1219,7 @@ export function useLiveHls(
     enableAudio: useCallback(() => actionsRef.current.enableAudio(), []),
     seekToLive: useCallback(() => actionsRef.current.seekToLive(), []),
     switchMirror: useCallback((index: number) => actionsRef.current.switchMirror(index), []),
-    switchProtocol: useCallback((protocol: StreamProtocol) => actionsRef.current.switchProtocol(protocol), [])
+    switchProtocol: useCallback((protocol: StreamProtocol) => actionsRef.current.switchProtocol(protocol), []),
+    collectDiagnostics: useCallback(() => actionsRef.current.collectDiagnostics(), [])
   };
 }
