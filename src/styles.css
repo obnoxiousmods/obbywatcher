@@ -903,6 +903,44 @@
 
   /* Live full-card listing. Sized so a 6-bout main card fits a phone without
      scrolling the whole panel, and widens into two columns on a desktop. */
+  /* Who is watching right now. Denser than the all-time leaderboard because it
+     turns over constantly and is scanned, not read. */
+  .active-viewer-list {
+    @apply grid gap-1.5 sm:grid-cols-2 xl:grid-cols-1;
+  }
+
+  .active-viewer {
+    @apply flex min-w-0 items-center gap-2.5 rounded-lg border border-ow-border bg-white/[0.035] px-2.5 py-1.5;
+  }
+
+  .active-viewer-flag {
+    @apply shrink-0 text-[15px];
+  }
+
+  .active-viewer-name {
+    @apply grid min-w-0 flex-1;
+  }
+
+  .active-viewer-name strong {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-black;
+  }
+
+  .active-viewer-name small {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-ow-muted;
+  }
+
+  .active-viewer-meta {
+    @apply flex shrink-0 items-center gap-1.5 text-[11px];
+  }
+
+  .active-viewer-meta em {
+    @apply not-italic font-black text-ow-mint;
+  }
+
+  .active-viewer-meta b {
+    @apply rounded bg-white/[0.06] px-1.5 py-0.5 font-black text-ow-muted;
+  }
+
   .live-card {
     @apply grid content-start gap-3 rounded-xl border border-ow-border bg-white/[0.025] p-3 sm:p-4;
   }

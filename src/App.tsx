@@ -518,7 +518,17 @@ export default function App() {
   const [watcherNews, setWatcherNews] = useState<WatcherNewsEntry[]>([]);
   type HighscoreEntry = { rank: number; codename: string; ip_masked: string; watch_seconds: number; favorite_source: string | null; flag: string; location: string; country: string };
   type SourcePerf = { source_id: string; label?: string; watch_hours: number; smoothness: number; buffering_minutes: number; stalls: number; viewers: number };
-  type HighscoreData = { leaderboard: HighscoreEntry[]; top_countries: { country: string; flag: string; watch_hours: number; viewers: number }[]; top_sources: { source_id: string; watch_hours: number }[]; source_performance: SourcePerf[]; best_sources: SourcePerf[]; viewers_tracked: number; total_watch_hours: number };
+  type ActiveViewer = {
+    codename: string;
+    ip_masked: string;
+    flag: string;
+    location: string;
+    source_id: string;
+    sessions: number;
+    watch_seconds: number;
+    idle_seconds: number;
+  };
+  type HighscoreData = { active_viewers?: ActiveViewer[]; leaderboard: HighscoreEntry[]; top_countries: { country: string; flag: string; watch_hours: number; viewers: number }[]; top_sources: { source_id: string; watch_hours: number }[]; source_performance: SourcePerf[]; best_sources: SourcePerf[]; viewers_tracked: number; total_watch_hours: number };
   const prettySource = (id: string) => id.replace(/^private-iptv-/, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const [highscores, setHighscores] = useState<HighscoreData | null>(null);
   const formatWatch = (seconds: number) => {
@@ -2630,6 +2640,39 @@ export default function App() {
               : `Schedule checked ${ufcScheduleLastChecked}. Fight cards and times can change.`}
           </p>
         </section>
+
+        {highscores && (highscores.active_viewers?.length ?? 0) > 0 && (
+          <section className="highscore-panel" aria-label="Viewers watching now">
+            <div className="highscore-head">
+              <h2>👀 Watching now</h2>
+              <span className="highscore-sub">
+                {highscores.active_viewers!.length} viewer
+                {highscores.active_viewers!.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <ul className="active-viewer-list">
+              {highscores.active_viewers!.map((viewer) => (
+                <li className="active-viewer" key={`${viewer.codename}-${viewer.ip_masked}`}>
+                  <span className="active-viewer-flag" aria-hidden="true">{viewer.flag}</span>
+                  <span className="active-viewer-name">
+                    <strong>{viewer.codename}</strong>
+                    <small>
+                      {viewer.ip_masked}
+                      {viewer.location ? ` · ${viewer.location}` : ""}
+                    </small>
+                  </span>
+                  <span className="active-viewer-meta">
+                    {viewer.watch_seconds > 0 && <em>{formatWatch(viewer.watch_seconds)}</em>}
+                    {viewer.sessions > 1 && <b>{viewer.sessions} tabs</b>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="source-note">
+              Codenames are derived from a salted hash. Raw IPs are never stored.
+            </p>
+          </section>
+        )}
 
         {highscores && highscores.leaderboard.length > 0 && (
           <section className="highscore-panel" aria-label="Viewer highscores">
