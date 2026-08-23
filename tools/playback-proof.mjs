@@ -31,7 +31,10 @@ const BROWSER = arg("browser", "firefox");
 const WARMUP_MS = Number(arg("warmup", "15")) * 1000;
 // A freeze shorter than this is a decode hiccup, not something a viewer notices.
 const FREEZE_THRESHOLD_MS = 500;
-const SAMPLE_MS = 250;
+// 100ms: a freeze shorter than a few frames is not viewer-visible, but sampling
+// at 250ms made the shortest detectable stall a quarter second wide and left the
+// onset conditions too coarse to attribute.
+const SAMPLE_MS = 100;
 
 const launcher = BROWSER === "chromium" ? chromium : firefox;
 
@@ -56,7 +59,7 @@ await page.evaluate((sampleMs) => {
   const v = document.querySelector("video");
   const P = {
     t0: Date.now(), samples: [], events: [],
-    lastT: null, freezeStart: null, freezes: [],
+    lastT: null, lastAt: null, freezeStart: null, freezeAt: null, freezes: [],
   };
   window.__proof = P;
   for (const k of ["waiting", "stalled", "seeking", "seeked", "ratechange", "error", "emptied", "pause"]) {
@@ -71,16 +74,40 @@ await page.evaluate((sampleMs) => {
       }
     }
     const lat = v.seekable.length ? v.seekable.end(v.seekable.length - 1) - v.currentTime : null;
-    // A freeze is the playhead not advancing while we are supposed to be playing.
-    if (P.lastT !== null && !v.paused) {
-      if (v.currentTime - P.lastT < 0.02) {
-        if (P.freezeStart === null) P.freezeStart = now;
+    // A freeze is the playhead failing to keep up with WALL CLOCK, measured
+    // against the real gap between samples rather than the nominal interval.
+    // Timers coalesce and fire late; assuming a fixed 250ms spacing meant two
+    // callbacks landing milliseconds apart looked identical to a stall.
+    if (P.lastT !== null && P.lastAt !== null && !v.paused) {
+      const wallDelta = (now - P.lastAt) / 1000;
+      const mediaDelta = v.currentTime - P.lastT;
+      // Below 5% of real time the playhead is effectively stopped, and this stays
+      // correct whatever the playback rate happens to be.
+      const stalled = wallDelta > 0.02 && mediaDelta < wallDelta * 0.05;
+      if (stalled) {
+        if (P.freezeStart === null) {
+          P.freezeStart = now;
+          // The conditions AT ONSET are what attribute the freeze. Recording them
+          // after the fact -- or only as window-wide minima -- is what left the
+          // 955ms event on 2026-08-22 unexplained.
+          P.freezeAt = {
+            bufferAhead: +ahead.toFixed(2),
+            latency: lat === null ? null : +lat.toFixed(2),
+            readyState: v.readyState,
+            networkState: v.networkState,
+            rate: v.playbackRate,
+            bufferedRanges: v.buffered.length,
+            recentEvents: P.events.slice(-4).map((e) => e.k)
+          };
+        }
       } else if (P.freezeStart !== null) {
-        P.freezes.push({ start: P.freezeStart, ms: now - P.freezeStart });
+        P.freezes.push({ start: P.freezeStart, ms: now - P.freezeStart, at: P.freezeAt });
         P.freezeStart = null;
+        P.freezeAt = null;
       }
     }
     P.lastT = v.currentTime;
+    P.lastAt = now;
     P.samples.push({
       t: now, ct: +v.currentTime.toFixed(3), ahead: +ahead.toFixed(2),
       lat: lat === null ? null : +lat.toFixed(2), rate: v.playbackRate,
@@ -143,7 +170,17 @@ console.log(`  playback rates seen: ${rates.join(", ")}  (1 only = no catch-up w
   console.log(`  rate 1st half=${half(h1).toFixed(4)}x (${atOne(h1)}% at 1.0x)  2nd half=${half(h2).toFixed(4)}x (${atOne(h2)}% at 1.0x)`);
   console.log(`  latency 1st half p50=${pct(h1.map((x) => x.lat).filter((x) => x !== null), 0.5)}s  2nd half p50=${pct(h2.map((x) => x.lat).filter((x) => x !== null), 0.5)}s`);
 }
-console.log(`  FREEZES >= ${FREEZE_THRESHOLD_MS}ms: ${real.length}${real.length ? "  " + JSON.stringify(real.slice(0, 10)) : ""}`);
+console.log(`  FREEZES >= ${FREEZE_THRESHOLD_MS}ms: ${real.length}`);
+for (const f of real.slice(0, 8)) {
+  const c = f.at ?? {};
+  // buffer==0 => starved (upstream or delivery). buffer>0 => the data was there
+  // and the decoder or compositor stalled, which is a different bug entirely.
+  const verdict = c.bufferAhead === 0 ? "STARVED (no buffered data)"
+    : c.bufferAhead < 1 ? `nearly starved (${c.bufferAhead}s buffered)`
+    : `buffer was FINE (${c.bufferAhead}s) -> decode/render stall, not delivery`;
+  console.log(`    t=${(f.start / 1000).toFixed(1)}s  ${f.ms}ms  ${verdict}`);
+  console.log(`      readyState=${c.readyState} networkState=${c.networkState} rate=${c.rate} ranges=${c.bufferedRanges} latency=${c.latency}s recent=[${(c.recentEvents ?? []).join(",")}]`);
+}
 console.log(`  total frozen: ${(P.freezes.filter((f) => f.start >= WARMUP_MS).reduce((a, f) => a + f.ms, 0) / 1000).toFixed(2)}s of ${wall.toFixed(0)}s`);
 const counts = {};
 for (const e of steadyEvents) counts[e.k] = (counts[e.k] || 0) + 1;
