@@ -532,6 +532,7 @@ export function useLiveHls(
       const url = sourceWithCacheBust(source.url, `probe-${fetchedAtMs}-${run}`);
       try {
         const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+        metrics.manifestFetchMs(Date.now() - fetchedAtMs);
         if (!response.ok) {
           return { ok: false, mirrorIndex: index, url, fetchedAtMs, error: `probe HTTP ${response.status}` } satisfies ManifestProbeFailure;
         }
@@ -956,10 +957,15 @@ export function useLiveHls(
         try {
           const st = shakaPlayer.getStats() as {
             estimatedBandwidth?: number; corruptedFrames?: number;
-            droppedFrames?: number; decodedFrames?: number;
+            droppedFrames?: number; decodedFrames?: number; loadLatency?: number;
           };
           metrics.frames({ decoded: st.decodedFrames, dropped: st.droppedFrames, corrupted: st.corruptedFrames });
+          // FRAG_BUFFERED is hls.js-only, so without this the delivery metrics
+          // were null for every Shaka viewer -- i.e. almost everyone.
           if (st.estimatedBandwidth) metrics.segmentLoaded({ bandwidthBps: st.estimatedBandwidth });
+          if (typeof st.loadLatency === "number" && st.loadLatency > 0) {
+            metrics.segmentLoaded({ ttfbMs: st.loadLatency * 1000 });
+          }
         } catch {
           /* stats are best-effort; never let diagnostics break playback */
         }
