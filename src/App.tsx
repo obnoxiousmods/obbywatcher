@@ -5,6 +5,12 @@ import { streamConfig } from "./config/stream";
 import { defaultThemeId, isThemeId, themeOptions } from "./config/themes";
 import type { ThemeId } from "./config/themes";
 import { ufcSchedule, ufcScheduleLastChecked } from "./config/ufcSchedule";
+import {
+  activeSegmentIndex,
+  boutsRemaining,
+  parseLiveSchedule,
+  type LiveSchedule
+} from "./lib/liveSchedule";
 import { createStableHlsConfig, useLiveHls } from "./hooks/useLiveHls";
 import type { LivePlaybackStatus } from "./hooks/useLiveHls";
 import { liveEdgeBackoffSeconds, parseHlsManifest, sourceWithCacheBust } from "./lib/reconnect";
@@ -578,7 +584,13 @@ export default function App() {
   const activePlaybackHost = customSrc ? hostLabelForUrl(activePlaybackUrl) : activeMirror.host;
 
   const activeTheme = themeOptions.find((theme) => theme.id === themeId) ?? themeOptions[0];
+  const [liveSchedule, setLiveSchedule] = useState<LiveSchedule | null>(null);
   const scheduleBuckets = getScheduleBuckets(ufcSchedule, nowMs);
+  // Only trust the live payload when it actually carries a card; otherwise the
+  // bundled seed renders as before.
+  const live = liveSchedule?.event ? { event: liveSchedule.event } : null;
+  const liveActiveIndex = live ? activeSegmentIndex(live.event.cards, nowMs) : -1;
+  const liveRemaining = live ? boutsRemaining(live.event.cards) : 0;
   const featuredEvent = scheduleBuckets.current ?? scheduleBuckets.next ?? ufcSchedule[0];
   const playerBusy =
     snapshot.autoplayBlocked ||
@@ -1103,6 +1115,29 @@ export default function App() {
     }
     void fetchHighscores();
     const interval = window.setInterval(fetchHighscores, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  // Live card straight from the cockpit's ESPN tracking -- the same data that
+  // arms the encode, so the schedule cannot disagree with what is on air. The
+  // bundled ufcSchedule stays as a seed for when the cockpit is unreachable.
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchLiveSchedule() {
+      try {
+        const resp = await fetch(`${OBBY_COCKPIT}/api/ufc-schedule`, { cache: "no-store" });
+        const parsed = parseLiveSchedule(await resp.json());
+        if (!cancelled && parsed?.event) setLiveSchedule(parsed);
+      } catch {
+        // Falls back to the bundled seed; never block the page on this.
+      }
+    }
+    void fetchLiveSchedule();
+    // ESPN bout results move in minutes; 60s is plenty and keeps the edge cache useful.
+    const interval = window.setInterval(fetchLiveSchedule, 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -2495,6 +2530,59 @@ export default function App() {
           </div>
 
           <div className="schedule-body">
+            {live && (
+              <div className="live-card" data-final={live.event.is_final ? "true" : "false"}>
+                <div className="live-card-head">
+                  <div>
+                    <h3>{live.event.name}</h3>
+                    <p>
+                      {[live.event.venue, live.event.city].filter(Boolean).join(", ")}
+                      {live.event.main_event ? ` \u00b7 ${live.event.main_event}` : ""}
+                    </p>
+                  </div>
+                  <span className="live-card-remaining">
+                    {live.event.is_final
+                      ? live.event.winner
+                        ? `Final \u00b7 ${live.event.winner}`
+                        : "Final"
+                      : `${liveRemaining} bout${liveRemaining === 1 ? "" : "s"} left`}
+                  </span>
+                </div>
+
+                {live.event.cards.map((card, index) => {
+                  const state = card.all_final ? "done" : index === liveActiveIndex ? "live" : "upcoming";
+                  return (
+                    <div className="card-segment" data-state={state} key={`${card.label}-${card.start}`}>
+                      <div className="card-segment-head">
+                        <span className="card-segment-label">{card.label}</span>
+                        <span className="card-segment-time">{formatEventTime(card.start)}</span>
+                        <span className="card-segment-count">
+                          {card.completed_bouts}/{card.bout_count}
+                        </span>
+                      </div>
+                      {card.bouts.length > 0 && (
+                        <ol className="bout-list">
+                          {/* ESPN returns card order with the headliner last. */}
+                          {card.bouts.map((bout, boutIndex) => (
+                            <li
+                              className="bout-row"
+                              data-done={boutIndex < card.completed_bouts ? "true" : "false"}
+                              key={`${card.label}-${bout}-${boutIndex}`}
+                            >
+                              <span>{bout}</span>
+                              {boutIndex === card.bouts.length - 1 && index === live.event.cards.length - 1 && (
+                                <em className="bout-tag">Main event</em>
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="featured-fight">
               <img src={streamConfig.imageUrl} alt="" loading="lazy" />
               <div>
@@ -2536,7 +2624,11 @@ export default function App() {
             </div>
           </div>
 
-          <p className="source-note">Schedule checked {ufcScheduleLastChecked}. Fight cards and times can change.</p>
+          <p className="source-note">
+            {live
+              ? "Live card data. Times and matchups can change."
+              : `Schedule checked ${ufcScheduleLastChecked}. Fight cards and times can change.`}
+          </p>
         </section>
 
         {highscores && highscores.leaderboard.length > 0 && (

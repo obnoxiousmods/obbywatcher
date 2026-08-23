@@ -901,6 +901,84 @@
     @apply inline-flex min-h-7 items-center rounded-lg bg-ow-mint/14 px-2 py-1 text-[12px] font-black text-ow-mint;
   }
 
+  /* Live full-card listing. Sized so a 6-bout main card fits a phone without
+     scrolling the whole panel, and widens into two columns on a desktop. */
+  .live-card {
+    @apply grid content-start gap-3 rounded-xl border border-ow-border bg-white/[0.025] p-3 sm:p-4;
+  }
+
+  .live-card-head {
+    @apply flex flex-wrap items-start justify-between gap-2;
+  }
+
+  .live-card-head h3 {
+    @apply text-[15px] font-black leading-tight sm:text-[17px];
+  }
+
+  .live-card-head p {
+    @apply mt-0.5 text-[12px] text-ow-muted;
+  }
+
+  .live-card-remaining {
+    @apply shrink-0 rounded-lg bg-ow-mint/14 px-2 py-1 text-[12px] font-black text-ow-mint;
+  }
+
+  .live-card[data-final="true"] .live-card-remaining {
+    @apply bg-white/10 text-ow-muted;
+  }
+
+  .card-segment {
+    @apply grid gap-2 rounded-lg border border-ow-border bg-white/[0.03] p-2.5;
+  }
+
+  /* The segment on air is the one a viewer is looking for; make it findable at a
+     glance rather than making them read every start time. */
+  .card-segment[data-state="live"] {
+    @apply border-ow-mint/45 bg-ow-mint/[0.07];
+  }
+
+  .card-segment[data-state="done"] {
+    @apply opacity-60;
+  }
+
+  .card-segment-head {
+    @apply flex flex-wrap items-baseline gap-x-2 gap-y-1;
+  }
+
+  .card-segment-label {
+    @apply text-[13px] font-black;
+  }
+
+  .card-segment-time {
+    @apply text-[12px] text-ow-muted;
+  }
+
+  .card-segment-count {
+    @apply ml-auto rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[11px] font-black text-ow-muted;
+  }
+
+  .bout-list {
+    @apply grid gap-1 sm:grid-cols-2 xl:grid-cols-1;
+  }
+
+  .bout-row {
+    @apply flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-[12.5px];
+  }
+
+  .bout-row span {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  /* Struck through rather than hidden: knowing a fight already happened is as
+     useful as knowing one is coming. */
+  .bout-row[data-done="true"] span {
+    @apply text-ow-muted line-through decoration-ow-muted/50;
+  }
+
+  .bout-tag {
+    @apply ml-auto shrink-0 rounded bg-ow-mint/14 px-1.5 py-0.5 text-[10px] font-black not-italic uppercase tracking-wide text-ow-mint;
+  }
+
   .slot-list {
     @apply grid content-start gap-2;
   }
