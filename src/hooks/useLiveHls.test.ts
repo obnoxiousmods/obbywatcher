@@ -42,6 +42,29 @@ describe("stable HLS config", () => {
     expect(config.fragLoadingTimeOut).toBeLessThanOrEqual(7_000);
   });
 
+  it("keeps live-edge catch-up inaudible", () => {
+    const config = createStableHlsConfig();
+
+    // 1.05 is a 5% rate change -- an audible pitch shift, and measured on the
+    // Shaka side as 0.981x average playback over 165s (it sat at the correction
+    // rate for roughly a third of the session). Correcting slowly for longer is
+    // strictly better than correcting fast and being heard.
+    expect(config.maxLiveSyncPlaybackRate).toBeLessThanOrEqual(1.02);
+  });
+
+  it("holds enough live buffer to outlast a bursty upstream publish gap", () => {
+    const config = createStableHlsConfig();
+    const targetSeconds = (config.liveSyncDurationCount ?? 0) * ENCODER_SEGMENT_SECONDS;
+
+    // Measured origin publish jitter on a bursty feed: p90 5.25s, max 7.54s
+    // between publishes against a 2.002s nominal. Sit closer to the edge than
+    // that and the buffer empties inside one gap.
+    expect(targetSeconds).toBeGreaterThanOrEqual(9);
+    // ...but still comfortably inside the published window, or the player ends up
+    // riding the oldest retained segment and 404s when it rotates out.
+    expect(targetSeconds).toBeLessThan(ENCODER_WINDOW_SECONDS / 2);
+  });
+
   it("lets hls.js absorb routine segment errors instead of rebuilding the pipeline", () => {
     const config = createStableHlsConfig();
 

@@ -304,12 +304,15 @@ export function createStableHlsConfig(): Partial<HlsConfig> {
     // margin when a 4s gap lands and every viewer stalls together; 4 absorbs it.
     // Lower this only after the jitter is fixed at source (chunked CMAF output),
     // not because the segments are "only" 2s long.
-    liveSyncDurationCount: 4,
+    // 5 segments ~= 10s, matching the Shaka targetLatency above. Both are sized
+    // against measured publish jitter (p90 5.25s, max 7.54s), not a round number.
+    liveSyncDurationCount: 5,
     liveMaxLatencyDurationCount: 12,
     // This is hls.js's only smooth catch-up: below ~1.05 a viewer who falls 20s
     // behind needs ~20min to recover and instead hits the seek-to-live threshold,
     // which is a hard skip. 1.1 was audible; 1.05 recovers without warping pitch.
-    maxLiveSyncPlaybackRate: 1.05,
+    // 1.05 is an audible 5% pitch shift. Correct slowly and inaudibly instead.
+    maxLiveSyncPlaybackRate: 1.02,
     backBufferLength: 90,
     // Must stay under the 30s publish window or hls.js chases segments that
     // have already rotated off the playlist.
@@ -627,23 +630,40 @@ export function useLiveHls(
           dash: { ignoreSuggestedPresentationDelay: true },
           // NB: this lives under `manifest`, not `streaming`. Shaka silently drops
           // unknown config keys, so putting it in the wrong section is a no-op.
-          defaultPresentationDelay: 7
+          defaultPresentationDelay: 10
         },
         streaming: {
           // Must stay well under the 30s publish window; 30 meant Shaka tried to
           // buffer the entire window and sat at the oldest retained segment.
-          bufferingGoal: 12,
-          rebufferingGoal: 4,
+          //
+          // Sized against MEASURED origin publish jitter, not a round number. A
+          // bursty upstream feed delivers segments in clumps: p90 5.25s, max
+          // 7.54s between publishes against a 2.002s nominal. The buffer has to
+          // outlast that gap or the viewer freezes, so steady-state buffer must
+          // exceed rebufferingGoal + worst gap.
+          bufferingGoal: 20,
+          // Lowered, not raised: this is the floor at which Shaka STOPS playback
+          // to re-buffer. 4s meant a single 5s publish gap tripped it.
+          rebufferingGoal: 3,
           lowLatencyMode: false,
           // Without this Shaka has NO catch-up: one stall drops the viewer further
           // behind live and they stay there for the rest of the session. Measured
           // viewers stuck at 22/34/58s behind, each at their own fixed offset.
           liveSync: {
             enabled: true,
-            targetLatency: 8,
-            targetLatencyTolerance: 3,
-            maxPlaybackRate: 1.05,
-            minPlaybackRate: 0.95,
+            targetLatency: 10,
+            // Widened from 3. The tolerance is a deadband: inside it Shaka leaves
+            // playback alone. At +/-3s around a target the band was narrower than
+            // the feed's own jitter, so Shaka micro-corrected almost continuously
+            // -- measured 0.981x average over 165s, i.e. it sat at 0.95x for
+            // roughly a third of the session. Rate warping IS a viewer-visible
+            // defect (5% is an audible pitch shift), so the deadband must be
+            // wider than the jitter it is reacting to.
+            targetLatencyTolerance: 6,
+            // Narrowed from 1.05/0.95 to keep any correction imperceptible.
+            // Correcting slowly for longer beats correcting fast and being heard.
+            maxPlaybackRate: 1.02,
+            minPlaybackRate: 0.99,
             // Beyond this the drift is too big to rate-correct; jump to live.
             panicMode: true,
             panicThreshold: 30
