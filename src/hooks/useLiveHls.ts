@@ -338,7 +338,16 @@ export function createStableHlsConfig(): Partial<HlsConfig> {
     // escalates on CRITICAL. hls.js had no equivalent: with 0 retries every routine
     // 404 counted toward softRecoveryFailureThreshold, so three of them -- normal
     // on a live playlist with publish jitter -- destroyed the whole pipeline.
-    fragLoadingMaxRetry: 3
+    fragLoadingMaxRetry: 3,
+    // hls.js's equivalent of Shaka's stallThreshold. Default 2s means a stall
+    // with data still buffered is stared at for two full seconds before the
+    // playhead is nudged -- and bufferNudgeOnStall was one of the two most
+    // common errors in viewer telemetry. Same reasoning as the Shaka side: react
+    // in a quarter second, and keep the retry budget so a nudge that does not
+    // take is tried again rather than escalating to a pipeline rebuild.
+    highBufferWatchdogPeriod: 0.25,
+    nudgeOffset: 0.1,
+    nudgeMaxRetry: 5
   };
 }
 
@@ -693,6 +702,24 @@ export function useLiveHls(
           // to re-buffer. 4s meant a single 5s publish gap tripped it.
           rebufferingGoal: 3,
           lowLatencyMode: false,
+          // Shaka's stall detector waits stallThreshold seconds before nudging the
+          // playhead, and its default is a FULL SECOND. That default is the freeze:
+          // both residual interruptions measured on 2026-08-22 were 834ms and
+          // 955ms, which is not how long the underlying hiccup lasted -- it is how
+          // long Shaka sat on it before reacting. The same upstream hole now costs
+          // ~250ms instead of ~1s, which is under the threshold most viewers
+          // notice at all.
+          //
+          // Not lower than this: 0.25s is still 15 frames at 60fps, so playback
+          // that was about to resume on its own is left alone rather than being
+          // skipped over unnecessarily.
+          stallEnabled: true,
+          stallThreshold: 0.25,
+          stallSkip: 0.1,
+          // Same reasoning for a real gap in the media (upstream corruption
+          // discarded by the encoder leaves one): detect it in 0.1s rather than
+          // 0.5s. Jumping a hole promptly is strictly better than staring at it.
+          gapDetectionThreshold: 0.1,
           // Without this Shaka has NO catch-up: one stall drops the viewer further
           // behind live and they stay there for the rest of the session. Measured
           // viewers stuck at 22/34/58s behind, each at their own fixed offset.

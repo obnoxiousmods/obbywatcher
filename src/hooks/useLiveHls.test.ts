@@ -42,6 +42,22 @@ describe("stable HLS config", () => {
     expect(config.fragLoadingTimeOut).toBeLessThanOrEqual(7_000);
   });
 
+  it("reacts to a stall in a fraction of a second, not seconds", () => {
+    const config = createStableHlsConfig();
+
+    // The default is 2s, and Shaka's equivalent default is 1s. Those defaults ARE
+    // the freeze: the two residual interruptions measured on 2026-08-22 were
+    // 834ms and 955ms, which is not how long the underlying hiccup lasted -- it
+    // is how long the player sat on it before nudging the playhead.
+    expect(config.highBufferWatchdogPeriod).toBeLessThanOrEqual(0.25);
+    // ...but still several frames, so playback that was about to resume on its
+    // own is left alone rather than skipped over.
+    expect(config.highBufferWatchdogPeriod).toBeGreaterThanOrEqual(0.1);
+    // A nudge that does not take should be retried, not escalated into a full
+    // pipeline rebuild, which costs the viewer a visible jump.
+    expect(config.nudgeMaxRetry).toBeGreaterThanOrEqual(3);
+  });
+
   it("keeps live-edge catch-up inaudible", () => {
     const config = createStableHlsConfig();
 
