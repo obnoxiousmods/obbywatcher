@@ -24,6 +24,12 @@ export type ParsedManifestProbe = {
   variantCount?: number;
   endSequence: number | null;
   isLive: boolean;
+  /** Identity of the encoder RUN behind this manifest, when the format exposes
+   *  one. DASH gives `availabilityStartTime`, which ffmpeg stamps at process
+   *  start, so it changes on every encode restart and on nothing else. Unlike a
+   *  sequence number this is absolute: one observation is enough to tell whether
+   *  the presentation the player attached to still exists. */
+  presentationIdentity: string | null;
 };
 
 export type ManifestProbeResult = ParsedManifestProbe & {
@@ -196,6 +202,7 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
   let segmentCount = 0;
   let variantCount = 0;
   let isLive = true;
+  let initSegmentUri: string | null = null;
 
   for (const rawLine of manifest.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -222,6 +229,12 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
       continue;
     }
 
+    if (line.startsWith("#EXT-X-MAP:")) {
+      const uri = line.match(/URI="([^"]+)"/);
+      if (uri) initSegmentUri = uri[1];
+      continue;
+    }
+
     if (line === "#EXT-X-ENDLIST") {
       isLive = false;
     }
@@ -236,7 +249,10 @@ export function parseHlsManifest(manifest: string): ParsedManifestProbe | null {
     segmentCount: usableEntries,
     variantCount,
     endSequence,
-    isLive
+    isLive,
+    // A master playlist carries no run identity; a media playlist names the run
+    // in its init segment. Null simply falls back to the sequence comparison.
+    presentationIdentity: initSegmentUri
   };
 }
 
@@ -255,6 +271,7 @@ export function parseDashManifest(manifest: string): ParsedManifestProbe | null 
   const segmentCount = Math.max(segmentTimelineCount, segmentTemplateCount > 0 ? representationCount : 0);
   const endSequence = mediaSequence === null ? null : mediaSequence + Math.max(0, segmentCount - 1);
   const staticPresentation = /type="static"/.test(manifest);
+  const availabilityMatch = manifest.match(/availabilityStartTime="([^"]+)"/);
 
   if (representationCount === 0 && segmentTemplateCount === 0) return null;
 
@@ -263,7 +280,8 @@ export function parseDashManifest(manifest: string): ParsedManifestProbe | null 
     targetDurationSeconds,
     segmentCount,
     endSequence,
-    isLive: !staticPresentation
+    isLive: !staticPresentation,
+    presentationIdentity: availabilityMatch ? availabilityMatch[1] : null
   };
 }
 
@@ -315,4 +333,48 @@ export function isPlaybackStalled({
 }: StallInput) {
   if (playheadMoved) return false;
   return nowMs - lastTimeUpdateAtMs > stallTimeoutMs && bufferAheadSeconds < minBufferSeconds;
+}
+
+/** How a stall-time origin probe compares against what the origin last showed us.
+ *
+ *  `restarted` is the only verdict that justifies rebuilding the pipeline: the
+ *  encoder run the player attached to no longer exists, so the timeline it is
+ *  sitting on can never resume and no amount of waiting brings it back.
+ */
+export type OriginSequenceVerdict = "restarted" | "advanced" | "unknown";
+
+export type OriginBaseline = {
+  /** Identity of the run the player is attached to, if the format exposes one. */
+  presentationIdentity: string | null;
+  /** Last sequence seen from this origin, from any earlier observation. */
+  sequence: number | null;
+};
+
+/** Decide whether the origin has restarted under the player.
+ *
+ *  Identity first, sequence second, and the order matters. `availabilityStartTime`
+ *  is ABSOLUTE -- a single observation settles it. A sequence comparison is
+ *  RELATIVE and needs a baseline from before the restart, which is exactly what
+ *  the caller usually lacks: on 2026-08-29 an encode restart froze two viewers
+ *  for 64s and 71s, and each fired precisely ONE origin probe. With no earlier
+ *  sample the comparison returned "unknown", the restart went undetected, and
+ *  both viewers waited out the extension budget while the correct manifest was
+ *  already being served to them.
+ *
+ *  Note a fresh sample is NOT enough on its own to rescue the sequence path: two
+ *  samples taken after a restart both show the new low numbering and read as
+ *  "advanced". Only an observation predating the restart, or an absolute
+ *  identity, can catch it.
+ */
+export function compareOriginSequence(
+  probe: { presentationIdentity?: string | null; endSequence?: number | null; mediaSequence?: number | null },
+  baseline: OriginBaseline
+): OriginSequenceVerdict {
+  const identity = probe.presentationIdentity ?? null;
+  if (identity !== null && baseline.presentationIdentity !== null) {
+    return identity === baseline.presentationIdentity ? "advanced" : "restarted";
+  }
+  const sequence = probe.endSequence ?? probe.mediaSequence ?? null;
+  if (sequence === null || baseline.sequence === null) return "unknown";
+  return sequence < baseline.sequence ? "restarted" : "advanced";
 }

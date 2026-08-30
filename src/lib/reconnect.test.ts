@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chooseNextSourceIndex,
   chooseFreshestProbe,
+  compareOriginSequence,
   getBufferedAhead,
   isPlaybackStalled,
   isPlaylistStale,
@@ -180,7 +181,8 @@ seg122.ts`);
       segmentCount: 3,
       variantCount: 0,
       endSequence: 122,
-      isLive: true
+      isLive: true,
+      presentationIdentity: null
     });
   });
 
@@ -197,7 +199,8 @@ seg122.ts`);
       segmentCount: 2,
       variantCount: 2,
       endSequence: null,
-      isLive: true
+      isLive: true,
+      presentationIdentity: null
     });
   });
 
@@ -220,7 +223,8 @@ seg122.ts`);
       targetDurationSeconds: 4,
       segmentCount: 2,
       endSequence: 21,
-      isLive: true
+      isLive: true,
+      presentationIdentity: null
     });
   });
 
@@ -243,7 +247,8 @@ seg122.ts`);
           targetDurationSeconds: 4,
           segmentCount: 3,
           endSequence: 92,
-          isLive: true
+          isLive: true,
+          presentationIdentity: null
         },
         {
           ok: true,
@@ -254,7 +259,8 @@ seg122.ts`);
           targetDurationSeconds: 4,
           segmentCount: 3,
           endSequence: 90,
-          isLive: true
+          isLive: true,
+          presentationIdentity: null
         }
       ])?.mirrorIndex
     ).toBe(1);
@@ -325,5 +331,79 @@ describe("attach grace and stall detection", () => {
         bufferAheadSeconds: 5
       })
     ).toBe(false);
+  });
+});
+
+describe("compareOriginSequence", () => {
+  const attached = { presentationIdentity: "2026-08-29T06:53:15.000Z", sequence: 630 };
+
+  it("catches an encoder restart on the FIRST probe, with no earlier stall sample", () => {
+    // The 2026-08-29 incident: one probe fired, and the sequence path had no
+    // baseline. availabilityStartTime settles it from that single observation.
+    const afterRestart = { presentationIdentity: "2026-08-29T07:14:22.739Z", endSequence: 3 };
+    expect(compareOriginSequence(afterRestart, attached)).toBe("restarted");
+  });
+
+  it("does not cry restart while the same run keeps publishing", () => {
+    const sameRun = { presentationIdentity: "2026-08-29T06:53:15.000Z", endSequence: 640 };
+    expect(compareOriginSequence(sameRun, attached)).toBe("advanced");
+  });
+
+  it("treats an unchanged identity as alive even when the sequence has not moved", () => {
+    // Origin stalled, not restarted. Re-attaching hits the same missing data.
+    const frozen = { presentationIdentity: "2026-08-29T06:53:15.000Z", endSequence: 630 };
+    expect(compareOriginSequence(frozen, attached)).toBe("advanced");
+  });
+
+  it("falls back to the sequence when the format exposes no identity", () => {
+    const baseline = { presentationIdentity: null, sequence: 630 };
+    expect(compareOriginSequence({ endSequence: 3 }, baseline)).toBe("restarted");
+    expect(compareOriginSequence({ endSequence: 640 }, baseline)).toBe("advanced");
+  });
+
+  it("is honest about not knowing, rather than guessing a teardown", () => {
+    const empty = { presentationIdentity: null, sequence: null };
+    expect(compareOriginSequence({ endSequence: 3 }, empty)).toBe("unknown");
+    expect(compareOriginSequence({ endSequence: null }, { presentationIdentity: null, sequence: 630 })).toBe("unknown");
+  });
+
+  it("prefers identity over sequence when both are available", () => {
+    // Numbering restarted but it is the same run (window slid): not a restart.
+    const sameRunLowerNumber = { presentationIdentity: "2026-08-29T06:53:15.000Z", endSequence: 1 };
+    expect(compareOriginSequence(sameRunLowerNumber, attached)).toBe("advanced");
+  });
+});
+
+describe("parseDashManifest presentation identity", () => {
+  it("reads availabilityStartTime, which ffmpeg restamps on every encode restart", () => {
+    const mpd = `<MPD type="dynamic" availabilityStartTime="2026-08-29T07:14:22.739Z">
+      <SegmentTemplate startNumber="173" timescale="60000" duration="120000">
+        <SegmentTimeline><S t="0" d="96256" r="7" /></SegmentTimeline>
+      </SegmentTemplate><Representation id="0" /></MPD>`;
+    expect(parseDashManifest(mpd)?.presentationIdentity).toBe("2026-08-29T07:14:22.739Z");
+  });
+
+  it("returns null identity when the manifest omits it", () => {
+    const mpd = `<MPD type="dynamic"><SegmentTemplate startNumber="1" /><Representation id="0" /></MPD>`;
+    expect(parseDashManifest(mpd)?.presentationIdentity).toBeNull();
+  });
+});
+
+describe("parseHlsManifest presentation identity", () => {
+  it("names the run from the init segment when the media playlist carries one", () => {
+    const m3u8 = [
+      "#EXTM3U",
+      "#EXT-X-TARGETDURATION:2",
+      "#EXT-X-MEDIA-SEQUENCE:53",
+      '#EXT-X-MAP:URI="ufc_r6a9286cc_init_1.m4s"',
+      "#EXTINF:2.000,",
+      "ufc_r6a9286cc_chunk_1_000053.m4s"
+    ].join("\n");
+    expect(parseHlsManifest(m3u8)?.presentationIdentity).toBe("ufc_r6a9286cc_init_1.m4s");
+  });
+
+  it("leaves a master playlist without an identity, falling back to the sequence", () => {
+    const master = ["#EXTM3U", "#EXT-X-STREAM-INF:BANDWIDTH=6000000", "media_1.m3u8"].join("\n");
+    expect(parseHlsManifest(master)?.presentationIdentity).toBeNull();
   });
 });

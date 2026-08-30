@@ -7,6 +7,7 @@ import type { StreamMirror, StreamProtocol, StreamSource } from "../config/strea
 import {
   chooseNextSourceIndex,
   chooseFreshestProbe,
+  compareOriginSequence,
   getBufferedAhead,
   isPlaybackStalled,
   isPlaylistStale,
@@ -19,7 +20,7 @@ import {
   sourceWithCacheBust,
   withinAttachGrace
 } from "../lib/reconnect";
-import type { ManifestProbe, ManifestProbeFailure, ManifestProbeResult } from "../lib/reconnect";
+import type { ManifestProbe, ManifestProbeFailure, ManifestProbeResult, OriginBaseline } from "../lib/reconnect";
 import { createDiagnosticsRing, createMetricsAccumulator, emptyPlaybackMetrics, type DiagEvent, type PlaybackMetrics } from "../lib/diagnostics";
 
 export type LivePlaybackStatus = "idle" | "connecting" | "live" | "buffering" | "reconnecting" | "offline" | "failed";
@@ -135,6 +136,11 @@ const defaultOptions: Required<LiveHlsOptions> = {
  *  which comfortably covers an upstream hiccup or a source-side segment gap,
  *  while still recovering a player that is genuinely wedged. */
 const ORIGIN_ALIVE_STALL_EXTENSIONS = 3;
+/** How often to take a healthy-playback reading of the origin, to keep a baseline
+ *  an encoder restart can be measured against. Long enough to be free (~3KB of
+ *  manifest against megabytes of segments), short enough that the baseline is
+ *  never more than one interval stale. */
+const ORIGIN_SAMPLE_INTERVAL_MS = 30_000;
 
 const emptySource: StreamSource = {
   id: "pending",
@@ -393,6 +399,10 @@ export function useLiveHls(
     let healthTimer: number | null = null;
     let stableTimer: number | null = null;
     let probeRun = 0;
+    // Separate counter for probes that are NOT mirror selection. probeFreshSource
+    // aborts itself when probeRun moves under it, so a background sample sharing
+    // that counter would silently cancel an in-flight rotation.
+    let sampleRun = 0;
     let activeSourceIndex = 0;
     const probeControllers: AbortController[] = [];
     let attempt = 0;
@@ -411,6 +421,14 @@ export function useLiveHls(
     const metrics = createMetricsAccumulator();
     let stallProbeInFlight = false;
     let lastStallProbeSequence: number | null = null;
+    // What the ORIGIN last showed us, gathered while playback was HEALTHY.
+    // Deliberately outlives a stall episode: it is the baseline that lets the
+    // FIRST probe of a stall recognise an encoder restart, which is the case
+    // confirmStallAgainstOrigin exists to catch and could not previously detect.
+    // Only a source/mirror change invalidates it -- identities and sequences
+    // from different origins are not comparable.
+    let originBaseline: OriginBaseline = { presentationIdentity: null, sequence: null };
+    let lastOriginSampleAtMs = 0;
     let originAliveStallExtensions = 0;
     let lastObservedTime = 0;
     let attachedAtMs = Date.now();
@@ -800,6 +818,12 @@ export function useLiveHls(
       clearTimer(reconnectTimer);
       reconnectTimer = null;
       reconnectPending = true;
+      if (index !== activeSourceIndex) {
+        // Different mirror or protocol: identities and sequences are not
+        // comparable across origins, so the baseline has to be rebuilt.
+        originBaseline = { presentationIdentity: null, sequence: null };
+        lastOriginSampleAtMs = 0;
+      }
       activeSourceIndex = index;
       const source = sources[activeSourceIndex] ?? sources[0];
       const url = sourceWithCacheBust(source.url, `${Date.now()}-${attempt}`);
@@ -900,6 +924,28 @@ export function useLiveHls(
      * The last two extend the stall window rather than ending it, bounded by
      * ORIGIN_ALIVE_STALL_EXTENSIONS so a genuinely wedged player still recovers.
      */
+    /** Take a cheap reading of the origin while playback is HEALTHY.
+     *
+     *  Without this the origin is only ever observed during a stall, and by then
+     *  it is too late: an encoder restart is only visible against an observation
+     *  that PREDATES it. The manifest is ~3KB and this runs every
+     *  ORIGIN_SAMPLE_INTERVAL_MS, so the cost is a rounding error next to the
+     *  segment traffic -- and it is what makes the restart branch of
+     *  confirmStallAgainstOrigin reachable at all.
+     */
+    const sampleOriginBaseline = async () => {
+      if (stallProbeInFlight || reconnectPending) return;
+      const source = sources[activeSourceIndex] ?? sources[0];
+      if (!source) return;
+      lastOriginSampleAtMs = Date.now();
+      const probe = await probeSource(source, activeSourceIndex, (sampleRun += 1));
+      if (!mounted || reconnectPending || !probe.ok) return;
+      originBaseline = {
+        presentationIdentity: probe.presentationIdentity ?? originBaseline.presentationIdentity,
+        sequence: probe.endSequence ?? probe.mediaSequence ?? originBaseline.sequence
+      };
+    };
+
     const confirmStallAgainstOrigin = async (bufferAheadSeconds: number) => {
       if (stallProbeInFlight || reconnectPending) return;
       stallProbeInFlight = true;
@@ -920,10 +966,14 @@ export function useLiveHls(
         publish({ lastProbe: probeSnapshotFromResult(probe, sources) });
         targetDurationSeconds = probe.targetDurationSeconds || targetDurationSeconds;
         const sequence = probe.endSequence ?? probe.mediaSequence;
-        const previous = lastStallProbeSequence;
+        const baseline: OriginBaseline =
+          lastStallProbeSequence !== null
+            ? { presentationIdentity: originBaseline.presentationIdentity, sequence: lastStallProbeSequence }
+            : originBaseline;
+        const verdict = compareOriginSequence(probe, baseline);
         lastStallProbeSequence = sequence;
 
-        if (sequence !== null && previous !== null && sequence < previous) {
+        if (verdict === "restarted") {
           // The encoder restarted under us. Re-attach is the only cure.
           originAliveStallExtensions = 0;
           consecutiveSourceFailures = 0;
@@ -1050,6 +1100,10 @@ export function useLiveHls(
         if (playheadMoved) {
           lastTimeUpdateAtMs = now;
           lastObservedTime = video.currentTime;
+          // Healthy: this is the only window in which a usable baseline can be
+          // captured, because a restart is only detectable against an
+          // observation that predates it.
+          if (now - lastOriginSampleAtMs > ORIGIN_SAMPLE_INTERVAL_MS) void sampleOriginBaseline();
         } else if (
           isPlaybackStalled({
             nowMs: now,
@@ -1073,6 +1127,8 @@ export function useLiveHls(
       mediaRecoveryAttempts = 0;
       softRecoveryFailures = 0;
       originAliveStallExtensions = 0;
+      // Per-stall comparison state only. originBaseline deliberately survives --
+      // it is the last-known-good origin position, not per-stall bookkeeping.
       lastStallProbeSequence = null;
       lastSegmentAtMs = Date.now();
       publish({ status: "live", autoplayBlocked: false, lastError: null, nextRetryAtMs: null });
