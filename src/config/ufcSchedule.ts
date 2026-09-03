@@ -18,9 +18,40 @@ export type UfcEvent = {
   note?: string;
 };
 
-export const ufcScheduleLastChecked = "2026-07-11";
+export const ufcScheduleLastChecked = "2026-09-03";
 
 export const ufcSchedule: UfcEvent[] = [
+  {
+    id: "ufc-fn-kape-vs-horiguchi",
+    title: "UFC Fight Night: Kape vs Horiguchi",
+    shortTitle: "Kape vs Horiguchi",
+    dateLabel: "Saturday, June 20",
+    dateIso: "2026-06-20T12:00:00.000Z",
+    venue: "Meta APEX",
+    city: "Las Vegas, Nevada",
+    stream: "Paramount+",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-june-20-2026",
+    mainCardIso: "2026-06-21T00:00:00.000Z",
+    slots: [
+      { label: "Prelims", iso: "2026-06-20T21:00:00.000Z" },
+      { label: "Main card", iso: "2026-06-21T00:00:00.000Z" }
+    ]
+  },
+  {
+    id: "ufc-fn-fiziev-vs-torres",
+    title: "UFC Fight Night: Fiziev vs Torres",
+    shortTitle: "Fiziev vs Torres",
+    dateLabel: "Saturday, June 27",
+    dateIso: "2026-06-27T12:00:00.000Z",
+    venue: "National Gymnastics Arena",
+    city: "Baku, Azerbaijan",
+    stream: "Paramount+",
+    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-june-27-2026",
+    mainCardIso: "2026-06-27T16:00:00.000Z",
+    slots: [
+      { label: "Main card", iso: "2026-06-27T16:00:00.000Z" }
+    ]
+  },
   {
     id: "ufc-329",
     title: "UFC 329: McGregor vs. Holloway 2",
@@ -33,15 +64,13 @@ export const ufcSchedule: UfcEvent[] = [
     sourceUrl: "https://www.ufc.com/event/ufc-329",
     mainCardIso: "2026-07-12T01:00:00.000Z",
     slots: [
-      { label: "Early prelims", iso: "2026-07-11T21:00:00.000Z" },
-      { label: "Prelims", iso: "2026-07-11T23:00:00.000Z" },
       { label: "Main card", iso: "2026-07-12T01:00:00.000Z" }
     ]
   },
   {
-    id: "ufc-fn-du-plessis-vs-usman",
-    title: "UFC Fight Night: Du Plessis vs. Usman",
-    shortTitle: "Du Plessis vs. Usman",
+    id: "ufc-fn-2026-07-18",
+    title: "UFC Fight Night: TBD vs. TBD",
+    shortTitle: "TBD vs. TBD",
     dateLabel: "Saturday, July 18",
     dateIso: "2026-07-18T12:00:00.000Z",
     venue: "Paycom Center",
@@ -93,40 +122,9 @@ export const ufcSchedule: UfcEvent[] = [
     city: "Philadelphia, Pennsylvania",
     stream: "Paramount+",
     sourceUrl: "https://www.ufc.com/event/ufc-330",
-    mainCardIso: "2026-08-16T01:00:00.000Z",
-    slots: [
-      { label: "Main card", iso: "2026-08-16T01:00:00.000Z" }
-    ]
-  },
-  {
-    id: "ufc-fn-hernandez-vs-rodrigues",
-    title: "UFC Fight Night: Hernandez vs. Rodrigues",
-    shortTitle: "Hernandez vs. Rodrigues",
-    dateLabel: "Saturday, August 22",
-    dateIso: "2026-08-22T12:00:00.000Z",
-    venue: "Golden 1 Center",
-    city: "Sacramento, California",
-    stream: "Paramount+",
-    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-august-22-2026",
-    mainCardIso: "2026-08-22T22:00:00.000Z",
-    slots: [
-      { label: "Main card", iso: "2026-08-22T22:00:00.000Z" }
-    ]
-  },
-  {
-    id: "ufc-fn-2026-08-29",
-    title: "UFC Fight Night: TBD vs. TBD",
-    shortTitle: "TBD vs. TBD",
-    dateLabel: "Saturday, August 29",
-    dateIso: "2026-08-29T12:00:00.000Z",
-    venue: "Oriental Sports Center",
-    city: "Pudong District China",
-    stream: "Paramount+",
-    sourceUrl: "https://www.ufc.com/event/ufc-fight-night-august-29-2026",
-    mainCardIso: "2026-08-29T22:00:00.000Z",
-    slots: [
-      { label: "Main card", iso: "2026-08-29T22:00:00.000Z" }
-    ]
+    mainCardIso: null,
+    slots: [],
+    note: "Start time TBA"
   },
   {
     id: "ufc-fn-2026-09-05",
